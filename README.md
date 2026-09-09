@@ -1,6 +1,6 @@
 # 🍅 PomoSolo Android（安卓端部门）
 
-> **部门：安卓端部门** ｜ 成立：2026-09-10 ｜ 状态：🚧 v0 开发中 ｜ 维护：本仓库
+> **部门：安卓端部门** ｜ 成立：2026-09-10 ｜ 状态：🚧 v0 开发中 ｜ 仓库：[PomoSolo-Android](https://github.com/liaowenqi123/PomoSolo-Android)
 >
 > 上级项目：**PomoSolo**（番茄钟专注应用，主仓库 `liaowenqi123/PomoSolo`，Tauri 桌面端 + PWA + 自建服务器）。
 > 团队协作、部门分工、接口权威文档见主仓库 [TEAM_GUIDE.md](D:/文件/lwq临时文件夹/软件工程/electron_pomodoro/TEAM_GUIDE.md)。
