@@ -1,0 +1,12 @@
+[安卓端部门] fix: 云端登录"连接失败"——增加云端域名适配层
+
+根因：PWA 产物按"生产同源"打包（API_ORIGIN 为空），页面里的 /api、/ws、/music
+请求会相对当前域名解析，落到虚拟源 host appassets.androidplatform.net → DNS 解析失败，
+请求根本没到 api.pomogrow.top，因此即使服务器 CORS 白名单已就绪也无法登录。
+
+修复：MainActivity 在页面启动前注入适配脚本（addDocumentStartJavaScript），把指向
+本地虚拟源的 /api、/ws、/music 路径改写主机为 https://api.pomogrow.top，
+并同步补 WebSocket wss 改写；本地资源(index/assets/tracks/manifest)不受影响。
+经 node 冒烟测试 10 组用例全部通过；服务器侧 OPTIONS/POST CORS 头亦已实测就绪。
+
+README 同步更新（CORS 条目改为已完成、技术栈与产物同步说明）。

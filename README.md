@@ -27,6 +27,7 @@
 |----|------|------|
 | 语言 | Java（Android 原生） | v0 壳以 Java 实现，后续按需引入 Kotlin |
 | WebView 资源 | `androidx.webkit` WebViewAssetLoader | 以 `https://appassets.androidplatform.net/` 虚拟源加载 assets，规避 `file://` 同源/缓存限制 |
+| 云端域名适配 | 页面启动前注入 JS（`MainActivity` 内，本部门自研） | PWA 产物按"生产同源"打包（API 基址为空）时，把相对 `/api`、`/ws`、`/music` 请求的主机改写为 `https://api.pomogrow.top`，再跨域访问（服务器 CORS 白名单放行本虚拟源） |
 | 宿主 | `app/src/main/assets/` | 打包进 APK 的 PWA 构建产物（含 3 首内置曲） |
 | SDK | compileSdk 34 / targetSdk 34 / minSdk 26 | JDK 17 |
 
@@ -74,12 +75,18 @@ node tools/copy-pwa-assets.mjs D:/any/pwa-dist
 同步注意事项：
 
 - `assets/registerSW.js` 会被保留为空操作 —— v0 不在 WebView 内注册 Service Worker；
+- 同步的产物**保持源项目默认构建即可**（即同源 `API_ORIGIN` 为空，无需带
+  `VITE_API_ORIGIN` 重新构建）：本地壳的"云端域名适配层"会把指向虚拟源主机的
+  `/api`、`/ws`、`/music` 请求改写为 `https://api.pomogrow.top`（见 MainActivity 注释）；
+  即便将来产物改为绝对域名，改写也只命中本地虚拟源路径，互不冲突；
 - PWA 产物变化后需重新同步并提交，保持 APK 内置前端与源项目一致。
 
 ## v0 已知限制 / 待办
 
-- **CORS**：Web 页面源为 `https://appassets.androidplatform.net`，访问云端 `api.pomogrow.top`
-  需要服务器部门将该源加入 CORS 白名单（待沟通，见主仓库 `server-planning/`）；
+- **云端域名适配（已落地）**：服务器部门已把 `https://appassets.androidplatform.net`
+  加入 `api.pomogrow.top` 的 CORS 白名单（2026-09-10，允许 `Content-Type`/`Authorization` 头，
+  OPTIONS 预检通过）。配合本端"启动前注入改写"后，登录/会话等云端请求可达；
+  在线曲目与自习室 WS 属同一改写规则（v1 起验证）；
 - **Service Worker / Cache API**：WebView 内受限，v0 不依赖（外壳本地打包、内置曲目离线可播），
   曲库在线曲目播放依赖网络；
 - **系统通知 / 锁屏媒体控制**：v0 未接入，PWA 的 Notification / MediaSession 在 WebView 内行为受限，
