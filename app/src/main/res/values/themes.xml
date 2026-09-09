@@ -1,0 +1,11 @@
+<resources>
+    <!-- 品牌深色外壳：Web 内容自带主题，原生壳保持极简深色，避免启动白屏闪烁 -->
+    <style name="Theme.PomoSolo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/pomosolo_bg</item>
+        <item name="android:statusBarColor">@color/pomosolo_bg</item>
+        <item name="android:navigationBarColor">@color/pomosolo_bg</item>
+        <item name="android:colorPrimary">@color/pomosolo_primary</item>
+        <item name="android:colorAccent">@color/pomosolo_primary</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

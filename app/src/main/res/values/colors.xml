@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- PomoSolo 品牌色（与桌面/PWA 端保持一致） -->
+    <color name="pomosolo_bg">#FF141414</color>
+    <color name="pomosolo_surface">#FF1F1F1F</color>
+    <color name="pomosolo_primary">#FFE94560</color>
+    <color name="pomosolo_primary_dark">#FFB53248</color>
+    <color name="pomosolo_text">#FFFFFFFF</color>
+</resources>
