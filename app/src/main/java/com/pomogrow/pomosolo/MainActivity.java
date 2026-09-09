@@ -12,6 +12,7 @@ import android.webkit.ConsoleMessage;
 import android.webkit.JsResult;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -63,6 +64,15 @@ public class MainActivity extends Activity {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                // 关键：把请求交给 WebViewAssetLoader 拦截。
+                // appassets.androidplatform.net 是虚拟源，必须在此返回 assets 内容；
+                // 否则 WebView 会真的去解析 DNS → ERR_NAME_NOT_RESOLVED。
+                // 非本地源（真实外链/API）会返回 null，继续走正常网络。
+                return assetLoader.shouldInterceptRequest(request.getUrl());
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri url = request.getUrl();
