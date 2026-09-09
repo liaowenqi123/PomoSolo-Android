@@ -1,60 +1,68 @@
 # 🍅 PomoSolo Android（安卓端部门）
 
-> **部门：安卓端部门** ｜ 成立：2026-09-10 ｜ 状态：🚧 v0 开发中 ｜ 仓库：[PomoSolo-Android](https://github.com/liaowenqi123/PomoSolo-Android)
+> **部门：安卓端部门** ｜ 成立：2026-09-10 ｜ 状态：🚧 **v1 开发中**（原生落地） ｜ 仓库：[PomoSolo-Android](https://github.com/liaowenqi123/PomoSolo-Android)
 >
 > 上级项目：**PomoSolo**（番茄钟专注应用，主仓库 `liaowenqi123/PomoSolo`，Tauri 桌面端 + PWA + 自建服务器）。
 > 团队协作、部门分工、接口权威文档见主仓库 [TEAM_GUIDE.md](D:/文件/lwq临时文件夹/软件工程/electron_pomodoro/TEAM_GUIDE.md)。
 
 ## 这是什么
 
-把 PomoSolo 移植为 **Android 原生应用**。代码由本部门**自研**，仅参考桌面端/PWA 的 Vue 源码思路，不 copy 其代码。
+PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自研**，不依赖任何 PWA 构建产物，
+不复用原前端代码；仅把桌面端/PWA 的 Vue 源码当作「界面长什么样 / 交互是什么」的参考蓝本。
 
-> **路线定调（2026-09-10）**：安卓端**不再把 PWA 构建产物当作应用内容**。v0 先借
-> WebView + PWA 产物做功能可行性验证（纯过渡桥接）；**v1 起改为以主仓库桌面端 Vue
-> 源码（`src/`）为蓝本，在本工程内复刻界面与业务**（对"原样复用其组件 vs 原生实现"
-> 做逐功能取舍），并叠加安卓原生能力 —— 数据真正落盘到 App 私有文件，而不是依赖
-> PWA 那套为浏览器/Service Worker 妥协的方案。
+> **路线定调（2026-09-10）**：安卓端**不再把 PWA 构建产物当作应用内容**。v0 的 WebView+PWA
+> 验证壳已从本仓库移除（保留在 git 历史），**v1 起以桌面端 Vue 源码（`src/`）为参考、原生实现
+> 界面与业务**，并叠加安卓原生能力 —— 数据真正落盘到 App 私有文件，不再受
+> Service Worker / Cache API / IndexedDB 在 WebView 中的妥协与限制约束。
+>
+> 本阶段验证结论（v1 探测）：服务器当前只在 `/music/*` 托管 3 首内置曲（`api.pomogrow.top`
+> 与 `start.pomogrow.top` 均可达）；曲库清单在 `start.pomogrow.top/music-manifest.json`。
+> 曲库会随服务器扩展增长 —— 下载层按清单通用实现，曲目多了自然可用。
 
-### 移植路线
+### V1 里程碑
 
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| **v0（WebView 验证壳 · 过渡桥接）** | WebView 加载随 APK 打包的 PWA 构建产物，验证核心功能在手机上的可行性；壳内注入云端域名适配层 | 🚧 当前 |
-| **v1（Vue 源码移植）** | 以桌面端 `src/` Vue 组件/store 为参考，复刻界面与业务；下载/P2P 歌曲改为**原生文件级持久化**（filesDir），逐步摆脱 WebView/Cache/IDB | ⏳ 规划中 |
-| **v2（原生深度增强）** | 系统通知、后台播放 + 锁屏媒体控制、前台检测（防分心）、原生前台服务精确计时等 | ⏳ 待启动 |
+| 里程碑 | 内容 | 状态 |
+|--------|------|------|
+| **m1 · 下载功能原生化** | Kotlin+Compose 原生壳；服务器曲库拉取 / 内置曲种子 / 下载→`filesDir` 落盘 / 本地导入(SAF) / 离线播放 / 状态持久化 | ✅ 完成 |
+| **m2 · 播放体验** | 下载续传与取消、后台播放 + 系统通知、锁屏媒体控制(MediaSession) | ⏳ 待办 |
+| **m3 · 计时与专注** | 番茄钟原生前台服务精确计时、桌面端同款首页 UI | ⏳ 待办 |
+| **m4 · 云端** | 账号体系（与服务器 REST/WS 打通）、自习室 WS、P2P 传歌 | ⏳ 规划 |
 
 ### 与 PWA 部门的关系（分工边界）
 
 - **共享**：产品功能定义、服务器接口（REST / WS / P2P）、账号体系 —— 接口改动必须同步主仓库 `server-planning/` 文档；
-- **参考**：桌面端 Vue `src/` 与 PWA 的 `src/pwa/` 源码仅作实现参考（复用组件设计与交互思路），不 copy；
-- **不依赖**：安卓交付内容与 PWA 构建产物解耦；PWA 在浏览器内做不到的能力（可靠文件持久化、前台检测、系统媒体控制…），安卓端用原生方案达成或更优。
+- **参考**：桌面端 Vue `src/` 与 PWA 的 `src/pwa/` 源码仅作界面/交互参考，不 copy、不引用其代码；
+- **不依赖**：安卓交付内容与 PWA 构建产物解耦；PWA 在浏览器里做不到的（可靠文件下载、前台检测、系统媒体控制…）安卓端用原生方案达成。
 
-## 技术栈
+## 技术栈（V1 原生）
 
 | 项 | 方案 | 说明 |
 |----|------|------|
-| 语言 | Java（Android 原生） | v0 壳以 Java 实现，后续按需引入 Kotlin |
-| WebView 资源 | `androidx.webkit` WebViewAssetLoader | 以 `https://appassets.androidplatform.net/` 虚拟源加载 assets，规避 `file://` 同源/缓存限制 |
-| 云端域名适配 | 页面启动前注入 JS（`MainActivity` 内，本部门自研） | PWA 产物按"生产同源"打包（API 基址为空）时，把相对 `/api`、`/ws`、`/music` 请求的主机改写为 `https://api.pomogrow.top`，再跨域访问（服务器 CORS 白名单放行本虚拟源） |
-| 内置前端（v0 过渡） | `app/src/main/assets/` | 暂载 PWA 构建产物（含 3 首内置曲）；v1 起替换为自研前端 |
+| 语言 | Kotlin 1.9 + Jetpack Compose (Material3) | 单 Activity 原生 UI，无 WebView |
+| 播放 | Media3 ExoPlayer 1.3 | 本地 `file://` + 在线流统一播放，进度/播放态 StateFlow 驱动 UI |
+| 网络 | OkHttp 4.12 | 曲库清单拉取；下载用流式写入 `.part` → 原子改名，进度 0–100 |
+| 存储 | `filesDir/music/` + `index.json` | 下载/导入状态持久化，重启可识别已下载内容 |
+| 导入 | SAF（系统文件选择器） | 把用户本地音频拷入私有目录统一管理 |
 | SDK | compileSdk 34 / targetSdk 34 / minSdk 26 | JDK 17 |
 
 ## 目录结构
 
 ```
 pomodoro/
-├── app/                                    # Android 应用模块
-│   ├── src/main/
-│   │   ├── java/com/pomogrow/pomosolo/
-│   │   │   └── MainActivity.java           # v0 WebView 壳（本部门自研）
-│   │   ├── assets/                         # v0 过渡内容源（PWA 产物，tools 同步，勿手改）
-│   │   ├── AndroidManifest.xml
-│   │   └── res/                            # 主题/颜色/图标（PomoSolo 品牌色）
-│   └── build.gradle.kts
-├── tools/
-│   └── copy-pwa-assets.mjs                 # 从源项目同步 PWA 产物 → assets/
-├── build.gradle.kts
-├── settings.gradle.kts
+├── app/src/main/java/com/pomogrow/pomosolo/
+│   ├── MainActivity.kt            # Compose 单 Activity（V1 主入口）
+│   ├── data/
+│   │   ├── Song.kt                # 歌曲模型（目录/本地导入）
+│   │   └── MusicStore.kt          # 音乐中心：清单拉取 / 下载 / 导入 / 删除 / 索引持久化
+│   ├── player/
+│   │   └── PlayerController.kt    # ExoPlayer 封装（队列/进度/状态流）
+│   └── ui/
+│       ├── theme/Theme.kt         # PomoSolo 品牌深色 Material3 主题
+│       └── MusicScreen.kt         # 曲库下载 / 本地管理 / 迷你播放器 / 展开播放面板
+├── app/src/main/assets/tracks/    # 3 首内置 mp3（内容种子，首启拷入私有目录）
+├── app/src/main/AndroidManifest.xml
+├── app/build.gradle.kts
+├── build.gradle.kts / settings.gradle.kts
 └── README.md
 ```
 
@@ -63,51 +71,24 @@ pomodoro/
 环境：JDK 17、Android SDK（compileSdk 34）。Android Studio 直接打开本目录即可；命令行：
 
 ```powershell
-# 调试包
 .\gradlew.bat :app:assembleDebug
 # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 同步 PWA 产物（v0 过渡桥接，v1 起停用）
+## 功能说明（m1）
 
-> 本节仅服务于 v0 验证壳。v1（Vue 源码移植）将不再以 PWA 构建产物为内容源，
-> 同步产物是临时手段。如需在 v0 内更新产物：先在源项目（`electron_pomodoro`）
-> 构建产出最新的 `pwa-dist/`（`npm ci && npm run pwa:build`），再执行下方同步。
+- **在线曲库**：启动即拉取服务器 `music-manifest.json`（失败用上次缓存），内置 3 首固定置顶；
+  点「下载」即原生落盘（进度环形显示），完成后状态本地化 —— 飞行模式照样播放；
+- **本地音乐**：内置曲 + 已下载 + 本地导入统一管理；显示歌曲数与占用空间；可删除；
+- **导入**：右上角文件图标 → 系统文件选择器选音频 → 拷入私有目录；
+- **播放**：点本地行按列表播放；内置曲在未下载前也可在线播放（仅联网时）。
 
-```powershell
-# 默认从 D:/文件/lwq临时文件夹/软件工程/electron_pomodoro/pwa-dist 同步
-node tools/copy-pwa-assets.mjs
+## 已知限制 / 待办
 
-# 也可以显式指定源
-node tools/copy-pwa-assets.mjs D:/any/pwa-dist
-```
-
-同步注意事项：
-
-- `assets/registerSW.js` 会被保留为空操作 —— v0 不在 WebView 内注册 Service Worker；
-- 同步的产物**保持源项目默认构建即可**（即同源 `API_ORIGIN` 为空，无需带
-  `VITE_API_ORIGIN` 重新构建）：本地壳的"云端域名适配层"会把指向虚拟源主机的
-  `/api`、`/ws`、`/music` 请求改写为 `https://api.pomogrow.top`（见 MainActivity 注释）；
-  即便将来产物改为绝对域名，改写也只命中本地虚拟源路径，互不冲突；
-- PWA 产物变化后需重新同步并提交，保持 APK 内置前端与源项目一致。
-
-## v0 已知限制 / 待办
-
-- **歌曲重进消失（2026-09-10 已定位）**：内置产物为 PWA v0.5.0，缺 `pomo-pwa:library`
-  （"已下载/P2P 歌名索引"的 localStorage 持久化）→ P2P 收到的歌字节虽在 IndexedDB，
-  但启动无恢复入口；曲库下载歌又依赖 Service Worker 运行时缓存（壳内未注册 SW）——
-  两者重进即从列表消失。主仓库 `src/pwa` 已实现修复（`music/library.ts` + 启动恢复），
-  需用含修复的产物重建同步（见上节）；**v1 起改为原生文件级持久化，不再受此约束**；
-- **云端域名适配（已落地）**：服务器部门已把 `https://appassets.androidplatform.net`
-  加入 `api.pomogrow.top` 的 CORS 白名单（2026-09-10，允许 `Content-Type`/`Authorization` 头，
-  OPTIONS 预检通过）。配合本端"启动前注入改写"后，登录/会话等云端请求可达；
-  在线曲目与自习室 WS 属同一改写规则（v1 起验证）；
-- **Service Worker / Cache API**：WebView 内受限，v0 不依赖（外壳本地打包、内置曲目离线可播），
-  曲库在线曲目播放依赖网络；
-- **系统通知 / 锁屏媒体控制**：v0 未接入，PWA 的 Notification / MediaSession 在 WebView 内行为受限，
-  由 v1 原生实现；
-- **前台分心检测**：桌面端依赖"检测前台窗口"，手机端需换用原生 Activity 栈检测方案（v1+）；
-- **切后台**：WebView 计时基于 JS，应用切后台/息屏可能被系统冻结 —— v1 用原生前台服务 + 精确计时替换。
+- 下载不支持续传/取消（m2 补）；进程被杀时进行中下载会残留 `.part`，下次启动自动忽略并可由用户重新下载；
+- 后台/息屏播放目前仍会随进程回收停止（m2 用前台服务 + MediaSession 解决）；
+- 服务器目前仅有 3 首内置曲可下载；曲库扩展由服务器侧决定；
+- 番茄计时/自习室/P2P 等其余产品功能在 m3/m4，暂未进入本包。
 
 ## 协作规范（沿用主仓库 TEAM_GUIDE）
 
@@ -115,10 +96,10 @@ node tools/copy-pwa-assets.mjs D:/any/pwa-dist
 - commit 格式：`[安卓端部门] feat: xxx` / `fix:` / `docs:` 等；
 - **文档同步铁律**：改动接口/架构/功能行为前先同步主仓库对应文档（`server-planning/`、README 等），
   跨部门改动必须留痕（见 TEAM_GUIDE §9.2/§10.3）；
-- 与服务器部门协作：CORS 白名单、曲库托管、域名（待启动，见 PWA-requirements.md 同类要求）。
+- 与服务器部门协作：曲库清单与 `/music` 文件托管、将来下载鉴权等（接口以主仓库文档为准）。
 
 ## 参考
 
 - 主仓库：`D:/文件/lwq临时文件夹/软件工程/electron_pomodoro/`（GitHub: `liaowenqi123/PomoSolo`）
   - `README.md`、`TEAM_GUIDE.md`、`server-planning/EXTERNAL-INTERFACES.md`
-- PWA 端设计：主仓库 `src/pwa/README.md`（复用思路参考，不 copy）
+- 界面/交互参考：主仓库 `src/`（桌面端 Vue）与 `src/pwa/` —— 仅参考，不 copy
