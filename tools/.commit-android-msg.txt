@@ -1,8 +1,0 @@
-[安卓端部门] feat: v0 WebView 壳 + 部门文档/同步工具
-
-- MainActivity：自研 WebView 壳，WebViewAssetLoader 以 https://appassets.androidplatform.net
-  加载打包进 assets 的 PWA 构建产物；DOM storage / 常亮 / 外链走系统浏览器 / 返回键栈处理
-- assets/：PWA 构建产物（含 3 首内置曲），registerSW.js 置为空操作（WebView v0 不启用 SW）
-- res：PomoSolo 品牌深色主题与色板；包名 com.pomogrow.pomosolo，compileSdk 34 / minSdk 26
-- tools/copy-pwa-assets.mjs：从源项目 electron_pomodoro 同步 PWA 产物（可显式传源路径）
-- README.md：部门文档（移植路线、目录结构、构建运行、产物同步、已知限制、协作规范）
