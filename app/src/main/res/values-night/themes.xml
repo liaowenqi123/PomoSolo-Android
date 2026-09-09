@@ -1,0 +1,11 @@
+<resources>
+    <!-- 夜间模式：品牌本身就是深色外壳，与日间一致，避免启动白屏闪烁 -->
+    <style name="Theme.PomoSolo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/pomosolo_bg</item>
+        <item name="android:statusBarColor">@color/pomosolo_bg</item>
+        <item name="android:navigationBarColor">@color/pomosolo_bg</item>
+        <item name="android:colorPrimary">@color/pomosolo_primary</item>
+        <item name="android:colorAccent">@color/pomosolo_primary</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
