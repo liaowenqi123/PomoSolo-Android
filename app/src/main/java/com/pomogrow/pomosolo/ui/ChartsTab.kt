@@ -190,6 +190,7 @@ private fun ChartAction(task: DlTask?, onDownload: () -> Unit) {
 
         DlStage.QUEUED -> StageText("排队")
         DlStage.SEARCHING -> StageText("搜索中")
+        DlStage.PICKING -> StageText("AI 选片")
         DlStage.EXTRACTING -> StageText("提取中")
         DlStage.DOWNLOADING -> MiniProgress(task.progress)
         DlStage.DONE -> Icon(

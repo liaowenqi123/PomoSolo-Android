@@ -17,7 +17,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -25,15 +28,25 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pomogrow.pomosolo.data.AiPickStore
+import com.pomogrow.pomosolo.data.DeepSeekClient
 import com.pomogrow.pomosolo.data.SettingsStore
 import com.pomogrow.pomosolo.data.StatsStore
+import kotlinx.coroutines.launch
 import com.pomogrow.pomosolo.ui.theme.PomoBg
 import com.pomogrow.pomosolo.ui.theme.PomoPrimary
 import com.pomogrow.pomosolo.ui.theme.PomoSurface
@@ -47,6 +60,7 @@ fun SettingsScreen() {
     val settings by SettingsStore.settings.collectAsState()
     val todayCount by StatsStore.todayCount.collectAsState()
     val totalMinutes by StatsStore.totalMinutes.collectAsState()
+    val aiConfig by AiPickStore.config.collectAsState()
 
     Column(
         Modifier
@@ -113,6 +127,32 @@ fun SettingsScreen() {
                 checked = settings.vibrationEnabled,
                 onChange = { v -> SettingsStore.update { it.copy(vibrationEnabled = v) } },
             )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Section("音乐 · AI 选片") {
+            SwitchRow(
+                label = "AI 选片（DeepSeek）",
+                hint = "下载热榜歌曲时，用大模型从搜索结果里挑出最像纯音乐/原版的版本",
+                checked = aiConfig.enabled,
+                onChange = { v -> AiPickStore.update { it.copy(enabled = v) } },
+            )
+            DividerLine()
+            ApiKeyBlock(
+                value = aiConfig.apiKey,
+                onChange = { v -> AiPickStore.update { it.copy(apiKey = v.trim()) } },
+            )
+            DividerLine()
+            InfoRow(
+                "Key 状态",
+                when {
+                    aiConfig.configured -> "已配置"
+                    aiConfig.enabled -> "未配置（下载会提示先配置）"
+                    else -> "未启用（使用本地规则选片）"
+                },
+            )
+            DividerLine()
+            InfoRow("Key 来源", "本机填写 / 服务器下发（待账号体系）")
         }
 
         Spacer(Modifier.height(16.dp))
@@ -270,5 +310,84 @@ private fun InfoRow(label: String, value: String) {
     ) {
         Text(label, color = PomoText, fontSize = 14.sp)
         Text(value, color = PomoTextDim, fontSize = 13.sp)
+    }
+}
+
+/** DeepSeek API Key 配置 + 连接测试（对齐桌面端本地配置 Key 的方式）。 */
+@Composable
+private fun ApiKeyBlock(value: String, onChange: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var visible by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Text("DeepSeek API Key", color = PomoText, fontSize = 14.sp)
+        Text(
+            "在 platform.deepseek.com 创建；仅保存在本机，不会上传",
+            color = PomoTextDim,
+            fontSize = 11.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            placeholder = { Text("sk-...", color = PomoTextDim, fontSize = 13.sp) },
+            visualTransformation = if (visible) {
+                VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
+            trailingIcon = {
+                TextButton(onClick = { visible = !visible }) {
+                    Text(if (visible) "隐藏" else "显示", color = PomoTextDim, fontSize = 12.sp)
+                }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = PomoText,
+                unfocusedTextColor = PomoText,
+                focusedBorderColor = PomoPrimary,
+                unfocusedBorderColor = PomoSurfaceHigh,
+                cursorColor = PomoPrimary,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = {
+                    testing = true
+                    result = null
+                    val key = value.trim()
+                    scope.launch {
+                        result = try {
+                            val reply = DeepSeekClient.test(key)
+                            "连接正常（模型回复：$reply）"
+                        } catch (e: Exception) {
+                            e.message ?: "测试失败"
+                        }
+                        testing = false
+                    }
+                },
+                enabled = !testing && value.isNotBlank(),
+            ) {
+                Text(if (testing) "测试中…" else "测试连接", color = PomoPrimary)
+            }
+            if (testing) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = PomoPrimary)
+            }
+        }
+        // 固定高度：测试结果出现/消失不影响页面其它内容
+        Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.CenterStart) {
+            result?.let {
+                Text(
+                    it,
+                    color = PomoTextDim,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }

@@ -16,6 +16,7 @@ import java.util.Locale
 enum class DlStage(val label: String) {
     QUEUED("排队中"),
     SEARCHING("搜索音源"),
+    PICKING("AI 选片"),
     EXTRACTING("提取音频"),
     DOWNLOADING("下载中"),
     DONE("已完成"),
@@ -37,11 +38,12 @@ data class DlTask(
  *
  * 流程：B站搜索 → 规则选片 → 取 DASH 音频流 → 下载到私有目录（m4a）→ 登记进本地库。
  *
- * 与桌面端的差异（有意为之）：
- *  - **选片**：桌面端调 DeepSeek 大模型判断「哪条是纯音乐」；安卓端不引入外部 LLM 依赖，
- *    改为规则打分（过滤合集/教程/翻唱/超长视频，优先伴奏/纯音乐/钢琴等关键词 + 合适时长）；
- *  - **转码**：桌面端拿到 m4a 后用 ffmpeg / symphonia+mp3lame 转 mp3；安卓端**跳过转码**，
- *    直接落盘 m4a —— ExoPlayer / Media3 原生支持 AAC/M4A，音质也更高（无二次编码损失）。
+ * 选片（对齐桌面端 `deepseek_select`）：默认调 DeepSeek 大模型，从搜索结果前 6 条里
+ * 挑出最像纯音乐/原版的那条（提示词与 temperature=0 与桌面端完全一致）；
+ * 未配置 API Key（且未关闭 AI 选片）时直接报错提示，关闭 AI 选片则退化为本地规则打分。
+ *
+ * 与桌面端的差异：桌面端拿到 m4a 后用 ffmpeg / symphonia+mp3lame 转 mp3；
+ * 安卓端**跳过转码**直接落盘 m4a —— ExoPlayer / Media3 原生支持 AAC/M4A，无二次编码损失。
  *
  * 串行队列：一次只处理一首（对齐桌面端 DownloadDialog 的队列语义）。
  */
@@ -65,7 +67,8 @@ object SongDownloader {
     }
 
     private val activeStages = setOf(
-        DlStage.QUEUED, DlStage.SEARCHING, DlStage.EXTRACTING, DlStage.DOWNLOADING,
+        DlStage.QUEUED, DlStage.SEARCHING, DlStage.PICKING,
+        DlStage.EXTRACTING, DlStage.DOWNLOADING,
     )
 
     /** 入队下载一首歌（已在处理中则忽略）。 */
@@ -95,10 +98,41 @@ object SongDownloader {
         val key = task.key
         try {
             update(key) { it.copy(stage = DlStage.SEARCHING, progress = 0, detail = null) }
-            val video = findVideo(task.title, task.artist)
-            if (video == null) {
-                fail(key, "没有找到合适的纯音乐/伴奏音源")
+            // 对齐桌面端：用「歌名 - 歌手」搜索，取候选交给 AI 选片
+            val videos = BiliClient.search("${task.title} - ${task.artist}")
+            if (videos.isEmpty()) {
+                fail(key, "没有搜索到相关音源")
                 return
+            }
+
+            val aiConfig = AiPickStore.config.value
+            val video: BiliVideo
+            if (aiConfig.enabled) {
+                if (!aiConfig.configured) {
+                    fail(key, "请先在「设置 → AI 选片」配置 DeepSeek API Key")
+                    return
+                }
+                update(key) { it.copy(stage = DlStage.PICKING) }
+                val pickedIndex = try {
+                    DeepSeekClient.select(videos, aiConfig.apiKey)
+                } catch (e: Exception) {
+                    fail(key, "AI 选片失败：${e.message ?: "调用异常"}")
+                    return
+                }
+                val picked = pickedIndex?.let { videos.getOrNull(it) }
+                if (picked == null) {
+                    fail(key, "AI 判断没有合适的纯音乐版本")
+                    return
+                }
+                video = picked
+            } else {
+                // 关闭 AI 选片时退化为本地规则打分
+                val best = videos.maxByOrNull { score(it, task.title) }
+                if (best == null || score(best, task.title) <= 0) {
+                    fail(key, "没有找到合适的纯音乐/伴奏音源")
+                    return
+                }
+                video = best
             }
 
             update(key) { it.copy(stage = DlStage.EXTRACTING, detail = video.title) }
@@ -146,25 +180,6 @@ object SongDownloader {
     }
 
     // ---------------- 选片 ----------------
-
-    private suspend fun findVideo(title: String, artist: String): BiliVideo? {
-        val queries = listOf(
-            "$title $artist 纯音乐",
-            "$title 纯音乐",
-            "$title $artist",
-        )
-        for (q in queries) {
-            val videos = BiliClient.search(q)
-            if (videos.isEmpty()) continue
-            val best = videos
-                .map { it to score(it, title) }
-                .filter { it.second > 0 }
-                .maxByOrNull { it.second }
-                ?.first
-            if (best != null) return best
-        }
-        return null
-    }
 
     private val badWords = listOf(
         "合集", "小时", "循环", "串烧", "10p", "100首", "教程", "教学", "扒谱",

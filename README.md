@@ -35,7 +35,7 @@ PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自
 | **m1 · 下载功能原生化** | 服务器曲库拉取 / 内置曲种子 / 下载→`filesDir` 落盘 / 本地导入(SAF) / 离线播放 / 状态持久化 | ✅ 完成 |
 | **m2 · 页面复刻与计时** | 底部导航；专注页（单次 / 计划 / 正向 + 圆环 + 专注模式开关 + 统计）；设置页；计时状态机；阶段完成提醒；屏幕常亮 | ✅ 完成 |
 | **m2.1 · 行为对齐修复** | 模式切换不打断计时；「运行中禁止暂停/重置」回归专注模式专有；单次模式无跳过按钮；播放栏独立占位；文案入固定高度容器；容器渐变对齐 PWA 色板 | ✅ 完成 |
-| **m2.2 · 热榜与番茄图标** | 音乐热榜（网易云 / QQ）原生爬取；单曲「爬虫 + 音频提取」下载器（B站搜索 → DASH 音频流 → 落盘）；App 图标替换为番茄 | ✅ 完成 |
+| **m2.2 · 热榜与番茄图标** | 音乐热榜（网易云 / QQ）原生爬取；单曲「爬虫 + 音频提取」下载器（B站搜索 → **DeepSeek LLM 选片** → DASH 音频流 → 落盘）；App 图标替换为番茄 | ✅ 完成 |
 | **m3 · 播放与计时体验** | 后台播放 + 系统通知、锁屏媒体控制(MediaSession)、下载续传/取消、计时前台服务 | 🚧 部分 |
 | **m4 · 云端** | 账号体系（REST）、自习室 WS、P2P 传歌 | ⏳ 规划 |
 
@@ -69,7 +69,9 @@ pomodoro/
 │   │   ├── MusicStore.kt          # 音乐中心：清单拉取 / 下载(批量队列) / 导入 / 删除 / 索引持久化
 │   │   ├── ChartsStore.kt         # 音乐热榜：网易云 / QQ 榜单直连爬取
 │   │   ├── BiliClient.kt          # 音源客户端：B站搜索 / DASH 音频流提取 / 流式下载（CookieJar + 退避重试）
-│   │   ├── SongDownloader.kt      # 单曲下载器：搜索 → 规则选片 → 提取 → 落盘 → 登记本地库（串行队列）
+│   │   ├── DeepSeekClient.kt      # AI 选片：对齐桌面端 deepseek_select（提示词/温度/解析完全一致）
+│   │   ├── AiPickStore.kt         # AI 选片配置（开关 / API Key / 模型），本机持久化
+│   │   ├── SongDownloader.kt      # 单曲下载器：搜索 → AI 选片 → 提取 → 落盘 → 登记本地库（串行队列）
 │   │   ├── PomodoroSettings.kt    # 设置（时长、计划轮数、自动开始、提醒、常亮…）
 │   │   ├── StatsStore.kt          # 统计（今日完成 / 累计专注分钟，跨天自动重置）
 │   │   └── PomodoroTimer.kt       # 计时状态机（单次/计划/正向，work↔break，专注模式，完成事件）
@@ -123,17 +125,25 @@ pomodoro/
 
 ```
 榜单(网易云/QQ，只需歌名)
-   → B站搜索(api.bilibili.com/x/web-interface/search/type)
-   → 规则选片（过滤合集/教程/翻唱/超长视频，优先 纯音乐·伴奏·钢琴，时长 2.5–7 分钟）
+   → B站搜索(api.bilibili.com/x/web-interface/search/type)，取前 6 条候选
+   → DeepSeek AI 选片（POST api.deepseek.com/chat/completions，temperature=0）
    → view 取 cid → playurl(fnval=16) 取 DASH 音频流（bandwidth 最大）
    → 下载音频流 → 落盘 filesDir/music/*.m4a → 登记进「本地」并可离线播放
 ```
 
-与桌面端的两处**有意差异**：
+**AI 选片**（`DeepSeekClient`）与桌面端 `deepseek_select` 完全对齐：同一份 system prompt
+（纯音乐判断器）、`model=deepseek-chat`、`temperature=0`、只取前 6 条、模型只回 `1-6` 或 `None`；
+Key 无效 / 余额不足 / 频率超限分别给出 401 / 402 / 429 中文提示。
+
+Key 的配置方式（设置 → 音乐 · AI 选片）：
+- 本机填写 DeepSeek API Key（仅存 SharedPreferences）；带「测试连接」按钮；
+- 关闭「AI 选片」开关可退化为本地规则打分（关键词 + 时长，可离线）；
+- 桌面端还支持登录后由服务器 `GET /api/v1/config/deepseek-key` 下发，安卓端留待账号体系（m4）接入。
+
+与桌面端的**唯一有意差异**：
 
 | 环节 | 桌面端 | 安卓端 | 原因 |
 |------|--------|--------|------|
-| 选片 | 调 DeepSeek 大模型判断「哪条是纯音乐」 | **规则打分**（关键词 + 时长） | 不引入外部 LLM 依赖与 API Key，结果确定、可离线 |
 | 转码 | ffmpeg / symphonia+mp3lame 转 mp3 | **跳过转码，直接存 m4a** | Android 无 ffmpeg 可执行环境；ExoPlayer 原生支持 AAC/M4A，且无二次编码损失 |
 
 工程细节（对齐桌面端）：内存 CookieJar + 首次访问站点根拿 `buvid3`、失败退避重试
@@ -149,6 +159,7 @@ pomodoro/
 ### 设置页
 
 计时（专注/休息时长、计划轮数、自动开始）、提醒（提示音、震动）、
+**音乐 · AI 选片**（AI 选片开关、DeepSeek API Key、测试连接）、
 显示（屏幕常亮、正向计时阈值）、数据（今日/累计、清空今日）、关于。
 
 ## 行为对齐说明（PWA / 桌面端 → 安卓）
@@ -164,7 +175,7 @@ pomodoro/
 | 计时页配色 | `.container` 渐变（工作红 / 休息绿蓝 / 正向蓝紫） | 同色值渐变 |
 | 音乐播放器占位 | `.timer-section { padding-bottom: 120px }` | 与底部导航同处 `Scaffold.bottomBar`，由 Scaffold 预留 |
 | 热榜取数 | 直连网易云 / QQ 公开接口 | 同（`ChartsStore`） |
-| 单曲下载 | B站搜索 → DeepSeek 选片 → DASH → ffmpeg 转 mp3 | B站搜索 → 规则选片 → DASH → 直接存 m4a |
+| 单曲下载 | B站搜索 → DeepSeek 选片 → DASH → ffmpeg 转 mp3 | B站搜索 → DeepSeek 选片 → DASH → 直接存 m4a |
 | 下载队列 | 前端串行队列 + 伪进度条（后端无进度事件） | 串行队列 + **真实进度**（按 Content-Length 计算） |
 
 ## 已知限制 / 待办
@@ -172,7 +183,8 @@ pomodoro/
 - **后台播放**：息屏/切后台仍可能随进程回收停止（m3 用前台服务 + MediaSession 解决）；
 - **下载**：不支持续传/取消；进程被杀会残留 `.part`，下次启动自动忽略并可重新下载；
 - **热榜下载**：依赖 B站公开接口，高频使用可能触发 412 风控（已做 Cookie + 退避，仍可能失败）；
-  选片为规则实现，遇到冷门曲目可能找不到合适音源；如需更高准确率可后续接入 LLM 选片；
+- **AI 选片**：需自备 DeepSeek API Key（在设置里填写）；未配置且开关仍开启时会直接提示，
+  不会静默降级；关闭开关则退回本地规则选片（冷门曲目可能挑不到）；
 - **计时后台**：切后台回到前台时间准确（时间戳基准），但无系统通知/悬浮计时（m3 前台服务）；
 - **计划模式形态差异**：PWA 的计划是「可自由增删的任务列表」，安卓当前是「N 轮 × 固定时长」简化版；
 - 服务器曲库目前仅 3 首内置曲；曲库扩展由服务器侧决定；
