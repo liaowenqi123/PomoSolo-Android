@@ -71,6 +71,7 @@ import kotlinx.coroutines.launch
 import com.pomogrow.pomosolo.data.LocalImport
 import com.pomogrow.pomosolo.data.MusicStore
 import com.pomogrow.pomosolo.data.Song
+import com.pomogrow.pomosolo.data.SongDownloader
 import com.pomogrow.pomosolo.player.NowPlaying
 import com.pomogrow.pomosolo.player.PlayerController
 import com.pomogrow.pomosolo.player.Track
@@ -83,7 +84,8 @@ import com.pomogrow.pomosolo.ui.theme.PomoText
 import com.pomogrow.pomosolo.ui.theme.PomoTextDim
 
 private const val TAB_ONLINE = 0
-private const val TAB_LOCAL = 1
+private const val TAB_CHARTS = 1
+private const val TAB_LOCAL = 2
 
 @Composable
 fun MusicPage() {
@@ -94,6 +96,15 @@ fun MusicPage() {
         if (m != null) {
             snackbar.showSnackbar(m)
             MusicStore.consumeMessage()
+        }
+    }
+    // 热榜下载器的提示（下载完成 / 失败原因）
+    val dlMessage by SongDownloader.message.collectAsState()
+    LaunchedEffect(dlMessage) {
+        val m = dlMessage
+        if (m != null) {
+            snackbar.showSnackbar(m)
+            SongDownloader.consumeMessage()
         }
     }
     val context = LocalContext.current
@@ -146,6 +157,7 @@ fun MusicPage() {
                 onTab = { tab = it },
             )
             when (tab) {
+                TAB_CHARTS -> ChartsTab()
                 TAB_ONLINE -> OnlineList(
                     catalog = catalog,
                     local = local,
@@ -258,8 +270,9 @@ private fun SegTabs(tab: Int, onlineCount: Int, localCount: Int, onTab: (Int) ->
             .background(PomoSurface)
             .padding(4.dp),
     ) {
-        SegTab("在线曲库 · $onlineCount", active = tab == TAB_ONLINE) { onTab(TAB_ONLINE) }
-        SegTab("本地音乐 · $localCount", active = tab == TAB_LOCAL) { onTab(TAB_LOCAL) }
+        SegTab("曲库 · $onlineCount", active = tab == TAB_ONLINE) { onTab(TAB_ONLINE) }
+        SegTab("热榜", active = tab == TAB_CHARTS) { onTab(TAB_CHARTS) }
+        SegTab("本地 · $localCount", active = tab == TAB_LOCAL) { onTab(TAB_LOCAL) }
     }
 }
 

@@ -122,6 +122,21 @@ object MusicStore {
         }
     }
 
+    /** 音乐落盘目录（热榜下载器写入同一个私有目录）。 */
+    fun musicDirectory(): File = musicDir
+
+    /**
+     * 登记外部获取的音频（热榜下载器落盘的 m4a）进本地库并持久化，
+     * 登记后它会出现在「本地音乐」里并可离线播放。
+     */
+    fun registerDownloadedFile(fileName: String, title: String) {
+        _local.value = _local.value + (fileName to fileName)
+        if (_imports.value.none { it.file == fileName }) {
+            _imports.value = _imports.value + LocalImport(fileName, title)
+        }
+        persistIndex()
+    }
+
     fun delete(song: Song) {
         appScope.launch {
             val name = _local.value[song.file] ?: return@launch
