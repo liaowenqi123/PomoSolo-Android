@@ -3,6 +3,8 @@
 
     <!-- V1 原生应用：访问服务器曲库清单与 /music 文件（下载），系统文件选择器导入音频 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 番茄钟阶段结束的震动提醒 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
@@ -14,7 +16,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.PomoSolo">
 
-        <!-- V1：原生 Kotlin + Compose 主界面（曲库下载 / 本地管理 / 播放） -->
+        <!-- V1：原生 Kotlin + Compose 主界面（专注 / 音乐 / 设置） -->
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"

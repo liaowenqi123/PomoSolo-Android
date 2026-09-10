@@ -86,7 +86,7 @@ private const val TAB_ONLINE = 0
 private const val TAB_LOCAL = 1
 
 @Composable
-fun MusicApp() {
+fun MusicPage() {
     val snackbar = remember { SnackbarHostState() }
     val message by MusicStore.message.collectAsState()
     LaunchedEffect(message) {
@@ -104,7 +104,6 @@ fun MusicApp() {
         }
     }
     var tab by remember { mutableIntStateOf(TAB_ONLINE) }
-    var showPlayer by remember { mutableStateOf(false) }
 
     val catalog by MusicStore.catalog.collectAsState()
     val local by MusicStore.local.collectAsState()
@@ -125,11 +124,9 @@ fun MusicApp() {
             for (i in imports) add(LocalRow(file = i.file, title = i.title, tag = null))
         }
     }
-    val now by PlayerController.now.collectAsState()
-    val playing by PlayerController.playing.collectAsState()
 
     Box(Modifier.fillMaxSize().background(PomoBg)) {
-        Column(Modifier.fillMaxSize().padding(bottom = 64.dp)) {
+        Column(Modifier.fillMaxSize()) {
             Header(
                 onlineCount = catalog.size,
                 localCount = local.size + imports.size,
@@ -179,32 +176,7 @@ fun MusicApp() {
             }
         }
 
-        // 迷你播放条
-        now?.let { n ->
-            MiniPlayer(
-                now = n,
-                playing = playing,
-                onToggle = { PlayerController.toggle() },
-                onOpen = { showPlayer = true },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
-
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 78.dp))
-    }
-
-    if (showPlayer && now != null) {
-        PlayerSheet(
-            now = now!!,
-            onDismiss = { showPlayer = false },
-            onToggle = { PlayerController.toggle() },
-            onNext = { PlayerController.next() },
-            onPrev = { PlayerController.prev() },
-            onStop = {
-                PlayerController.stop()
-                showPlayer = false
-            },
-        )
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp))
     }
 }
 
@@ -448,114 +420,6 @@ private fun SongCard(
         }
         Spacer(Modifier.width(8.dp))
         trailing()
-    }
-}
-
-// ---------------- Mini player ----------------
-
-@Composable
-private fun MiniPlayer(
-    now: NowPlaying,
-    playing: Boolean,
-    onToggle: () -> Unit,
-    onOpen: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .background(PomoSurface.copy(alpha = 0.98f))
-            .clickable { onOpen() }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier.size(40.dp).clip(CircleShape).background(PomoPrimary),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("♪", color = Color.White, fontSize = 18.sp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text("正在播放", color = PomoTextDim, fontSize = 11.sp)
-            Text(now.title, color = PomoText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        IconButton(onClick = {
-            onToggle()
-        }) {
-            Icon(
-                if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (playing) "暂停" else "播放",
-                tint = PomoText,
-            )
-        }
-    }
-}
-
-// ---------------- Player sheet ----------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PlayerSheet(
-    now: NowPlaying,
-    onDismiss: () -> Unit,
-    onToggle: () -> Unit,
-    onNext: () -> Unit,
-    onPrev: () -> Unit,
-    onStop: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val playing by PlayerController.playing.collectAsState()
-    val pos by PlayerController.positionMs.collectAsState()
-    val dur by PlayerController.durationMs.collectAsState()
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(now.title, color = PomoText, fontSize = 20.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(4.dp))
-            Text(if (now.isLocal) "本地文件 · 离线可播" else "在线播放", color = PomoTextDim, fontSize = 13.sp)
-
-            Spacer(Modifier.height(18.dp))
-
-            val progress = if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
-            Slider(value = progress, onValueChange = { PlayerController.seekTo((it * dur).toLong()) })
-            Row(Modifier.fillMaxWidth()) {
-                Text(fmt(pos), color = PomoTextDim, fontSize = 12.sp)
-                Spacer(Modifier.weight(1f))
-                Text(fmt(dur), color = PomoTextDim, fontSize = 12.sp)
-            }
-
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPrev) {
-                    Icon(Icons.Filled.SkipPrevious, contentDescription = "上一首", tint = PomoText, modifier = Modifier.size(34.dp))
-                }
-                Spacer(Modifier.width(18.dp))
-                Box(
-                    Modifier.size(64.dp).clip(CircleShape).background(PomoPrimary).clickable { onToggle() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = "播放/暂停",
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-                Spacer(Modifier.width(18.dp))
-                IconButton(onClick = onNext) {
-                    Icon(Icons.Filled.SkipNext, contentDescription = "下一首", tint = PomoText, modifier = Modifier.size(34.dp))
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onStop) {
-                Text("停止并关闭", color = PomoTextDim)
-            }
-        }
     }
 }
 

@@ -1,8 +1,11 @@
 package com.pomogrow.pomosolo.player
 
 import android.content.Context
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +29,15 @@ data class NowPlaying(
     val isLocal: Boolean,
 )
 
-/** V1 播放引擎：Media3 ExoPlayer 封装，暴露播放状态流。 */
+/**
+ * V1 播放引擎：Media3 ExoPlayer 封装，暴露播放状态流。
+ *
+ * 关键点（曾导致“没声音”的原因）：
+ *  - 必须显式设置 AudioAttributes(USAGE_MEDIA / CONTENT_TYPE_MUSIC) 并请求音频焦点，
+ *    否则部分设备/ROM 会按“通知音/系统音”通道处理或直接不申请焦点而不出声；
+ *  - volume 显式置 1f，避免被系统音频流策略压到 0；
+ *  - 播放错误必须暴露给 UI（原先静默吞掉，用户只看到“点了没反应/没声音”）。
+ */
 object PlayerController {
 
     private lateinit var player: ExoPlayer
@@ -45,29 +56,58 @@ object PlayerController {
     private val _durationMs = MutableStateFlow(0L)
     val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
 
-    @Volatile private var initialized = false
+    /** 播放失败原因（一次性，UI 消费后清空）。 */
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    @Volatile
+    private var initialized = false
+
+    fun consumeError() {
+        _error.value = null
+    }
 
     fun init(context: Context) {
         if (initialized) return
         initialized = true
-        player = ExoPlayer.Builder(context.applicationContext).build().apply {
-            addListener(object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    _playing.value = isPlaying
-                }
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == Player.STATE_ENDED) {
-                        _playing.value = false
+        val audioAttrs = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+        player = ExoPlayer.Builder(context.applicationContext)
+            .setAudioAttributes(audioAttrs, /* handleAudioFocus = */ true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+            .apply {
+                volume = 1f
+                addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        _playing.value = isPlaying
                     }
-                }
-            })
-        }
+
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        when (playbackState) {
+                            Player.STATE_READY -> {
+                                _durationMs.value = duration.coerceAtLeast(0)
+                                _playing.value = isPlaying
+                            }
+                            Player.STATE_ENDED -> _playing.value = false
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        _playing.value = false
+                        _error.value = friendlyError(error)
+                    }
+                })
+            }
         // 进度节流更新（500ms）
         scope.launch {
             while (true) {
                 if (_now.value != null) {
                     _positionMs.value = player.currentPosition.coerceAtLeast(0)
-                    _durationMs.value = player.duration.coerceAtLeast(0)
+                    val d = player.duration
+                    if (d > 0) _durationMs.value = d
                 }
                 delay(500)
             }
@@ -76,10 +116,12 @@ object PlayerController {
 
     /** 播放一个队列，startIndex 定位起点。 */
     fun playQueue(queue: List<Track>, startIndex: Int) {
-        if (queue.isEmpty()) return
-        val idx = startIndex.coerceIn(0, queue.size - 1)
-        trackQueue = queue
-        val mediaItems = queue.map { t ->
+        val playable = queue.filter { it.uri.isNotBlank() }
+        if (playable.isEmpty()) return
+        val idx = startIndex.coerceIn(0, playable.size - 1)
+        trackQueue = playable
+        _error.value = null
+        val mediaItems = playable.map { t ->
             MediaItem.Builder()
                 .setUri(t.uri)
                 .setMediaMetadata(MediaMetadata.Builder().setTitle(t.title).build())
@@ -96,7 +138,14 @@ object PlayerController {
 
     fun toggle() {
         if (_now.value == null) return
-        if (player.isPlaying) player.pause() else player.play()
+        when {
+            player.isPlaying -> player.pause()
+            player.playbackState == Player.STATE_ENDED -> {
+                player.seekTo(0)
+                player.play()
+            }
+            else -> player.play()
+        }
     }
 
     fun seekTo(ms: Long) {
@@ -139,5 +188,17 @@ object PlayerController {
         val t = trackQueue.getOrNull(index) ?: return
         _now.value = NowPlaying(title = t.title, isLocal = !t.uri.startsWith("http"))
         _playing.value = player.isPlaying
+    }
+
+    private fun friendlyError(e: PlaybackException): String {
+        return when (e.errorCode) {
+            PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "文件不存在或已被删除"
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "服务器返回错误（文件可能未托管）"
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "网络连接失败，可先下载到本地再听"
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "音频格式不支持"
+            else -> "播放失败：${e.cause?.message ?: e.errorCodeName}"
+        }
     }
 }
