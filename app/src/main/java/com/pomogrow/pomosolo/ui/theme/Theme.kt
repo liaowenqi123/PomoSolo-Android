@@ -15,6 +15,13 @@ val PomoText = Color(0xFFFFFFFF)
 val PomoTextDim = Color(0xFFB3B3B3)
 val PomoGreen = Color(0xFF4CAF50)
 
+// ===== PWA/桌面端容器渐变（135deg）=====
+// 色值取自主仓库 src/styles/global.css 的 --container-gradient-* / --break-gradient-*
+// 与 App.vue 的 .container.stopwatch-mode（去掉 alpha，安卓端直接作为不透明渐变）。
+val PomoGradientWork = listOf(Color(0xFFEA6666), Color(0xFF8C3232))
+val PomoGradientBreak = listOf(Color(0xFF5AB48C), Color(0xFF4B76A2))
+val PomoGradientStopwatch = listOf(Color(0xFF667EEA), Color(0xFF764BA2))
+
 private val PomoColorScheme = darkColorScheme(
     primary = PomoPrimary,
     onPrimary = Color.White,

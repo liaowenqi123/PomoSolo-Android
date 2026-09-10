@@ -95,12 +95,7 @@ fun SettingsScreen() {
                 onChange = { v -> SettingsStore.update { it.copy(autoStartNext = v) } },
             )
             DividerLine()
-            SwitchRow(
-                label = "专注中允许暂停",
-                hint = "关闭时复刻 PWA 的惩罚机制：专注运行中不可暂停/重置",
-                checked = settings.allowPauseDuringWork,
-                onChange = { v -> SettingsStore.update { it.copy(allowPauseDuringWork = v) } },
-            )
+            InfoRow("专注模式", "在专注页开关")
         }
 
         Spacer(Modifier.height(16.dp))

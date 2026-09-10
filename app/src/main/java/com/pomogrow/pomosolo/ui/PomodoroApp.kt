@@ -8,6 +8,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -31,7 +32,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -76,7 +76,7 @@ fun PomodoroApp() {
         }
     }
 
-    // 阶段完成提醒：提示音 + 震动 + 文案
+    // 阶段完成/中断提醒：提示音 + 震动 + 文案
     LaunchedEffect(Unit) {
         PomodoroTimer.events.collect { event ->
             val settings = SettingsStore.settings.value
@@ -84,36 +84,39 @@ fun PomodoroApp() {
                 TimerEvent.WORK_DONE -> "专注完成，休息一下 ☕"
                 TimerEvent.BREAK_DONE -> "休息结束，继续专注 💼"
                 TimerEvent.PLAN_DONE -> "计划全部完成 🎉"
+                TimerEvent.FOCUS_BROKEN -> "专注已中断，本轮不计入统计"
             }
-            notifyFinish(context, settings)
+            if (event != TimerEvent.FOCUS_BROKEN) notifyFinish(context, settings)
             snackbar.showSnackbar(text)
         }
     }
 
-    Box(Modifier.fillMaxSize().background(PomoBg)) {
-        Scaffold(
-            containerColor = PomoBg,
-            snackbarHost = { SnackbarHost(snackbar) },
-            bottomBar = { PomoBottomBar(tab) { tab = it } },
-        ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                when (tab) {
-                    TAB_FOCUS -> FocusScreen()
-                    TAB_MUSIC -> MusicPage()
-                    else -> SettingsScreen()
+    Scaffold(
+        containerColor = PomoBg,
+        snackbarHost = { SnackbarHost(snackbar) },
+        // 迷你播放器与底部导航同处 bottomBar：Scaffold 会为整块预留高度，
+        // 页面内容不会被播放栏遮挡（PWA 也是给音乐播放器预留出空间）。
+        bottomBar = {
+            Column {
+                val current = now
+                if (current != null) {
+                    MiniPlayerBar(
+                        now = current,
+                        playing = playing,
+                        onToggle = { PlayerController.toggle() },
+                        onOpen = { showPlayer = true },
+                    )
                 }
+                PomoBottomBar(tab) { tab = it }
             }
-        }
-
-        val current = now
-        if (current != null) {
-            MiniPlayerBar(
-                now = current,
-                playing = playing,
-                onToggle = { PlayerController.toggle() },
-                onOpen = { showPlayer = true },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 82.dp),
-            )
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            when (tab) {
+                TAB_FOCUS -> FocusScreen()
+                TAB_MUSIC -> MusicPage()
+                else -> SettingsScreen()
+            }
         }
     }
 

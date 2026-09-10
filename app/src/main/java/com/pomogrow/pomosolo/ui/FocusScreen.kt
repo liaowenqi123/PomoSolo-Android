@@ -2,6 +2,7 @@ package com.pomogrow.pomosolo.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -17,11 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,10 +31,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalView
@@ -49,15 +51,18 @@ import com.pomogrow.pomosolo.data.SettingsStore
 import com.pomogrow.pomosolo.data.StatsStore
 import com.pomogrow.pomosolo.data.TimerMode
 import com.pomogrow.pomosolo.data.TimerPhase
-import com.pomogrow.pomosolo.ui.theme.PomoBg
-import com.pomogrow.pomosolo.ui.theme.PomoPrimary
-import com.pomogrow.pomosolo.ui.theme.PomoSurface
-import com.pomogrow.pomosolo.ui.theme.PomoText
-import com.pomogrow.pomosolo.ui.theme.PomoTextDim
+import com.pomogrow.pomosolo.data.TimerState
+import com.pomogrow.pomosolo.ui.theme.PomoGradientBreak
+import com.pomogrow.pomosolo.ui.theme.PomoGradientStopwatch
+import com.pomogrow.pomosolo.ui.theme.PomoGradientWork
 
 /**
  * 专注页（对齐 PWA 主计时页）：
- * 模式滑块（单次 / 计划 / 正向）→ 专注/休息切换 → 计时圆环 → 开始/重置 → 状态文案 → 今日统计。
+ * 容器渐变（工作红 / 休息绿蓝 / 正向蓝紫）→ 标题 → 模式滑块 → 专注·休息切换 →
+ * 计时圆环 → 专注模式开关 → 开始/重置 → 状态文案 → 统计。
+ *
+ * 布局约定：所有会随状态出现/消失的文案都放在**固定高度**的容器里，
+ * 保证按钮点击后页面不发生位移（PWA 的 .status 也始终占位）。
  */
 @Composable
 fun FocusScreen() {
@@ -68,7 +73,7 @@ fun FocusScreen() {
 
     LaunchedEffect(settings) { PomodoroTimer.applySettings(settings) }
 
-    // 计时中保持屏幕常亮（原生能力：PWA 做不到）
+    // 计时中保持屏幕常亮（原生能力）
     val view = LocalView.current
     val keepOn = settings.keepScreenOn && state.phase == TimerPhase.RUNNING
     DisposableEffect(keepOn) {
@@ -77,126 +82,146 @@ fun FocusScreen() {
     }
 
     val running = state.phase == TimerPhase.RUNNING
-    // 复刻 PWA：专注阶段运行中禁止暂停/重置（惩罚机制），可在设置里放开
-    val locked = state.mode == TimerMode.WORK && running && !settings.allowPauseDuringWork
+    // 只有「专注模式」运行中才禁止暂停/重置（PWA 奖惩机制）
+    val locked = state.lockedByFocusMode
 
     Column(
         Modifier
             .fillMaxSize()
-            .background(PomoBg)
+            .background(timerBackground(state))
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("🍅 PomoSolo", color = PomoText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.weight(1f))
-            Text(
-                "今日 $todayCount 个 · $totalMinutes 分钟",
-                color = PomoTextDim,
-                fontSize = 12.sp,
-            )
-        }
-
         Spacer(Modifier.height(18.dp))
+        Text("🍅 番茄钟", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+
+        Spacer(Modifier.height(14.dp))
         ModeSlider(state.appMode) { PomodoroTimer.setAppMode(it) }
 
-        Spacer(Modifier.height(12.dp))
-        when (state.appMode) {
-            AppMode.SINGLE -> ModeSwitch(state.mode) { PomodoroTimer.setMode(it) }
-            AppMode.PLAN -> Text(
-                "第 ${state.planRound} / ${settings.planRounds} 轮 · 每轮 ${settings.workMinutes} 分钟专注",
-                color = PomoTextDim,
-                fontSize = 13.sp,
-            )
-            AppMode.STOPWATCH -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("从零开始累计", color = PomoText, fontSize = 13.sp)
-                Text("适合不确定时长的任务", color = PomoTextDim, fontSize = 12.sp)
+        // 模式说明区：固定高度，避免切换模式时上方内容跳动
+        Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
+            when (state.appMode) {
+                AppMode.SINGLE -> ModeSwitch(state.mode) { PomodoroTimer.setMode(it) }
+                AppMode.PLAN -> Text(
+                    "第 ${state.planRound} / ${settings.planRounds} 轮 · 每轮 ${settings.workMinutes} 分钟专注",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 13.sp,
+                )
+                AppMode.STOPWATCH -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("从零开始累计", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        "💡 超过1分钟才会计入统计",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 11.sp,
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(26.dp))
-        TimerRing(progress = state.progress, modifier = Modifier.size(260.dp)) {
+        Spacer(Modifier.height(10.dp))
+        TimerRing(progress = state.progress, modifier = Modifier.size(240.dp)) {
             Text(
                 fmtClock(state.displayMs),
                 color = Color.White,
                 fontSize = 48.sp,
-                fontWeight = FontWeight.Light,
+                fontWeight = FontWeight.Bold,
             )
         }
 
-        Spacer(Modifier.height(18.dp))
-        Text(
-            statusText(state.appMode, state.mode, running),
-            color = if (running) PomoPrimary else PomoTextDim,
-            fontSize = 14.sp,
-            fontWeight = if (running) FontWeight.SemiBold else FontWeight.Normal,
-            textAlign = TextAlign.Center,
-        )
-
-        Spacer(Modifier.height(18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = { PomodoroTimer.toggle() },
-                enabled = !locked,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = PomoPrimary,
-                    contentColor = Color.White,
-                ),
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Text(if (running) "暂停" else "开始", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            }
-            OutlinedButton(
-                onClick = { PomodoroTimer.reset() },
-                enabled = !locked,
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Text(
-                    if (state.appMode == AppMode.STOPWATCH) "结束记录" else "重置",
-                    color = if (locked) PomoTextDim else PomoText,
-                    fontSize = 15.sp,
+        // 专注模式开关：固定高度（正向模式不显示时也占位）
+        Box(Modifier.fillMaxWidth().height(58.dp), contentAlignment = Alignment.Center) {
+            if (state.appMode != AppMode.STOPWATCH) {
+                FocusModeSwitch(
+                    active = state.focusMode,
+                    enabled = state.phase == TimerPhase.READY,
+                    onToggle = { PomodoroTimer.setFocusMode(!state.focusMode) },
                 )
             }
         }
 
-        if (locked) {
-            Spacer(Modifier.height(8.dp))
-            Text("专注中不可暂停 · 可在设置里放开", color = PomoTextDim, fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            PomoButton(
+                text = if (running) "暂停" else "开始",
+                primary = true,
+                enabled = !locked,
+                onClick = { PomodoroTimer.toggle() },
+            )
+            PomoButton(
+                text = "重置",
+                primary = false,
+                enabled = !locked,
+                onClick = { PomodoroTimer.reset() },
+            )
         }
 
-        if (state.appMode != AppMode.STOPWATCH && state.phase != TimerPhase.READY) {
-            TextButton(onClick = { PomodoroTimer.skip() }) {
-                Text("跳过当前阶段", color = PomoTextDim, fontSize = 12.sp)
+        Spacer(Modifier.height(10.dp))
+        // 状态文案：固定高度
+        Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.Center) {
+            Text(
+                statusText(state),
+                color = Color.White.copy(alpha = 0.9f),
+                fontSize = 12.sp,
+            )
+        }
+
+        // 辅助行（专注模式提示 / 跳过阶段）：固定高度，出现或消失都不改变布局
+        Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
+            when {
+                state.appMode == AppMode.PLAN && state.phase != TimerPhase.READY -> TextButton(
+                    onClick = { PomodoroTimer.skip() },
+                ) {
+                    Text("跳过当前阶段", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
+                }
+                locked -> Text(
+                    "专注模式：运行中不可暂停",
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                )
+                state.focusMode -> Text(
+                    "专注模式已开启 · 重置将中断本轮专注",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                )
             }
         }
 
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatCard("今日完成", "$todayCount 个", Modifier.weight(1f))
             StatCard("累计专注", "$totalMinutes 分钟", Modifier.weight(1f))
         }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
     }
 }
 
-private fun statusText(appMode: AppMode, mode: TimerMode, running: Boolean): String = when {
-    running && mode == TimerMode.WORK -> "专注中..."
-    running && mode == TimerMode.BREAK -> "休息中..."
-    !running && appMode == AppMode.PLAN -> "准备开始计划"
+/** 容器渐变：与 PWA 的 .container / .break-mode / .stopwatch-mode 一致。 */
+private fun timerBackground(state: TimerState): Brush {
+    val stops = when {
+        state.appMode == AppMode.STOPWATCH -> PomoGradientStopwatch
+        state.mode == TimerMode.BREAK -> PomoGradientBreak
+        else -> PomoGradientWork
+    }
+    return Brush.linearGradient(stops)
+}
+
+private fun statusText(state: TimerState): String = when {
+    state.phase == TimerPhase.RUNNING && state.mode == TimerMode.WORK -> "专注中..."
+    state.phase == TimerPhase.RUNNING && state.mode == TimerMode.BREAK -> "休息中..."
+    state.appMode == AppMode.PLAN -> "准备开始计划"
     else -> "准备开始专注工作"
 }
 
 // ---------------- 组件 ----------------
 
+/** 模式滑块（单次 / 计划 / 正向）：半透明白底 + 白色高亮（PWA 拨杆同色系）。 */
 @Composable
 private fun ModeSlider(current: AppMode, onSelect: (AppMode) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(PomoSurface)
+            .background(Color.White.copy(alpha = 0.12f))
             .padding(4.dp),
     ) {
         AppMode.values().forEach { mode ->
@@ -205,39 +230,39 @@ private fun ModeSlider(current: AppMode, onSelect: (AppMode) -> Unit) {
     }
 }
 
+/** 专注 / 休息切换（PWA .mode-btn：半透明白胶囊 + emoji）。 */
 @Composable
 private fun ModeSwitch(current: TimerMode, onSelect: (TimerMode) -> Unit) {
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(PomoSurface)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        SwitchPill("💼 专注", current == TimerMode.WORK) { onSelect(TimerMode.WORK) }
-        SwitchPill("☕ 休息", current == TimerMode.BREAK) { onSelect(TimerMode.BREAK) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ModePill("💼 专注", current == TimerMode.WORK) { onSelect(TimerMode.WORK) }
+        ModePill("☕ 休息", current == TimerMode.BREAK) { onSelect(TimerMode.BREAK) }
     }
 }
 
 @Composable
-private fun SwitchPill(label: String, active: Boolean, onClick: () -> Unit) {
+private fun ModePill(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (active) PomoPrimary else Color.Transparent)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = if (active) 0.25f else 0.15f))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = if (active) 0.5f else 0.3f),
+                shape = RoundedCornerShape(16.dp),
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
             )
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            color = if (active) Color.White else PomoTextDim,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
+            color = if (active) Color.White else Color.White.copy(alpha = 0.85f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
         )
     }
 }
@@ -252,7 +277,7 @@ private fun RowScope.PillTab(
     Box(
         modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(if (active) PomoPrimary else Color.Transparent)
+            .background(if (active) Color.White.copy(alpha = 0.22f) else Color.Transparent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -263,14 +288,100 @@ private fun RowScope.PillTab(
     ) {
         Text(
             label,
-            color = if (active) Color.White else PomoTextDim,
+            color = if (active) Color.White else Color.White.copy(alpha = 0.6f),
             fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
         )
     }
 }
 
-/** 计时圆环：对齐 PWA TimerProgress（背景 12% 白、进度 85% 白、线宽 5、从顶部顺时针）。 */
+/**
+ * 专注模式开关（PWA FocusModeSwitch）：胶囊轨道 + 滑块，激活时绿色。
+ * 仅 READY 阶段可切换，运行中禁用（disbled 时降透明度且不可点）。
+ */
+@Composable
+private fun FocusModeSwitch(active: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.White.copy(alpha = 0.10f))
+            .alpha(if (enabled) 1f else 0.6f)
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onToggle,
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "专注模式",
+            color = Color.White.copy(alpha = 0.85f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(
+            Modifier
+                .size(width = 44.dp, height = 24.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (active) Color(0x994CAF50) else Color.White.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier
+                    .padding(start = if (active) 23.dp else 3.dp)
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(Color.White),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            if (active) "开启" else "关闭",
+            color = if (active) Color(0xFF81C784) else Color.White.copy(alpha = 0.7f),
+            fontSize = 12.sp,
+        )
+    }
+}
+
+/** 主按钮（PWA .btn-start / .btn-reset：半透明白胶囊）。 */
+@Composable
+private fun PomoButton(text: String, primary: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .width(if (primary) 90.dp else 70.dp)
+            .height(36.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                if (primary) {
+                    Brush.linearGradient(
+                        listOf(Color.White.copy(alpha = 0.30f), Color.White.copy(alpha = 0.20f)),
+                    )
+                } else {
+                    SolidColor(Color.White.copy(alpha = 0.15f))
+                },
+            )
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = if (primary) 0f else 0.3f),
+                shape = RoundedCornerShape(18.dp),
+            )
+            .alpha(if (enabled) 1f else 0.5f)
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** 计时圆环：对齐 PWA TimerProgress（背景 12% 白、进度 85% 白、线宽 5、顶部顺时针）。 */
 @Composable
 private fun TimerRing(
     progress: Float,
@@ -312,13 +423,13 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
     Column(
         modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(PomoSurface)
-            .padding(vertical = 14.dp),
+            .background(Color.White.copy(alpha = 0.12f))
+            .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(value, color = PomoText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
-        Text(label, color = PomoTextDim, fontSize = 12.sp)
+        Text(label, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
     }
 }
 

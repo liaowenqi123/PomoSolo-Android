@@ -108,6 +108,20 @@ object MusicStore {
         appScope.launch { runDownload(song) }
     }
 
+    /**
+     * 批量下载（串行队列，对齐桌面端 DownloadDialog 的「队列」语义）：
+     * 跳过已本地化 / 正在下载的曲目，逐个下载，单曲失败不影响后续。
+     */
+    fun downloadAll(songs: List<Song>) {
+        appScope.launch {
+            for (song in songs) {
+                if (_local.value.containsKey(song.file)) continue
+                if (_busy.value.contains(song.file)) continue
+                runDownload(song)
+            }
+        }
+    }
+
     fun delete(song: Song) {
         appScope.launch {
             val name = _local.value[song.file] ?: return@launch

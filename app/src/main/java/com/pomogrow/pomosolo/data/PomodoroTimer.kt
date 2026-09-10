@@ -30,8 +30,8 @@ enum class TimerMode(val label: String) {
 
 enum class TimerPhase { READY, RUNNING, PAUSED, FINISHED }
 
-/** 一次性事件：用于完成提醒（提示音 / 震动 / 文案）。 */
-enum class TimerEvent { WORK_DONE, BREAK_DONE, PLAN_DONE }
+/** 一次性事件：用于完成/中断提醒（提示音 / 震动 / 文案）。 */
+enum class TimerEvent { WORK_DONE, BREAK_DONE, PLAN_DONE, FOCUS_BROKEN }
 
 data class TimerState(
     val appMode: AppMode = AppMode.SINGLE,
@@ -41,6 +41,12 @@ data class TimerState(
     val remainingMs: Long = 25 * 60_000L,
     val elapsedMs: Long = 0L,
     val planRound: Int = 1,
+    /**
+     * 专注模式（对齐 PWA 的 focusModeEnabled 奖惩开关）：
+     * 开启后运行中禁止暂停，重置 = 中断专注（关闭开关 + 重置 + 提示）。
+     * 只有它是「专注专有」的限制 —— 未开启时运行中可自由暂停/重置。
+     */
+    val focusMode: Boolean = false,
 ) {
     /** 圆环进度：1 - 剩余/总时长（PWA TimerProgress 同公式）。 */
     val progress: Float
@@ -53,14 +59,23 @@ data class TimerState(
     /** 圆环中央显示的时间。 */
     val displayMs: Long
         get() = if (appMode == AppMode.STOPWATCH) elapsedMs else remainingMs
+
+    /** 专注模式运行中：禁止暂停 / 重置（PWA：focus mode + running）。 */
+    val lockedByFocusMode: Boolean
+        get() = focusMode && phase == TimerPhase.RUNNING
 }
 
 /**
- * 番茄钟计时状态机（对齐 PWA timer store）。
+ * 番茄钟计时状态机（对齐 PWA timer store + App.vue 的按钮语义）。
  *
- * 计时基准用 [SystemClock.elapsedRealtime]，只按「结束时间戳」反推剩余时间，
- * 不依赖 tick 累加 —— 切后台/锁屏后回到前台时间依旧准确（PWA 用 200ms tick 累加，
- * 在浏览器里会因休眠漂移）。
+ * 关键行为与 PWA 一致：
+ *  - `setAppMode` / `setMode`：**运行中直接忽略**（PWA: `if (phase === "running") return`），
+ *    切换模式不会打断正在进行的计时；
+ *  - 完成一个番茄钟 → 切到下一阶段并停在 READY（单次模式不自动开始；计划模式自动进入下一项）；
+ *  - 「运行中禁止暂停/重置」只属于**专注模式**（PWA 奖惩机制），不是全局规则。
+ *
+ * 计时基准用 [SystemClock.elapsedRealtime]，按结束时间戳反推剩余时间，不依赖 tick 累加 ——
+ * 切后台/锁屏后回到前台时间依旧准确（PWA 用 200ms tick 累加，浏览器休眠时会漂移）。
  */
 object PomodoroTimer {
 
@@ -92,10 +107,16 @@ object PomodoroTimer {
         _state.value = cur.copy(totalMs = total, remainingMs = total)
     }
 
+    /**
+     * 切换应用模式（单次 / 计划 / 正向）。
+     * 对齐 PWA `setAppMode`：运行中直接忽略 —— 不会打断正在进行的计时。
+     */
     fun setAppMode(appMode: AppMode) {
+        val cur = _state.value
+        if (cur.phase == TimerPhase.RUNNING) return
+        if (cur.appMode == appMode) return
         stopTick()
         val s = SettingsStore.settings.value
-        val cur = _state.value
         val total = minutesOf(cur.mode, s) * 60_000L
         _state.value = cur.copy(
             appMode = appMode,
@@ -104,19 +125,46 @@ object PomodoroTimer {
             remainingMs = total,
             elapsedMs = 0L,
             planRound = 1,
+            // 正向计时的界面没有专注模式开关，避免开启后无法关闭
+            focusMode = if (appMode == AppMode.STOPWATCH) false else cur.focusMode,
         )
     }
 
+    /** 切换专注 / 休息。对齐 PWA `setMode`：运行中直接忽略。 */
     fun setMode(mode: TimerMode) {
+        val cur = _state.value
+        if (cur.phase == TimerPhase.RUNNING) return
+        if (cur.mode == mode) return
         stopTick()
         val s = SettingsStore.settings.value
         val total = minutesOf(mode, s) * 60_000L
-        _state.value = _state.value.copy(
+        _state.value = cur.copy(
             mode = mode,
             phase = TimerPhase.READY,
             totalMs = total,
             remainingMs = total,
+            elapsedMs = 0L,
         )
+    }
+
+    /**
+     * 专注模式开关（PWA FocusModeSwitch）。
+     * - 开启：仅 READY 阶段可开启（PWA `:disabled="phase !== 'ready'"`）；
+     * - 关闭：运行中关闭 = 放弃专注承诺 → 按中断处理。
+     */
+    fun setFocusMode(enabled: Boolean) {
+        val cur = _state.value
+        if (cur.focusMode == enabled) return
+        if (enabled) {
+            if (cur.phase != TimerPhase.READY) return
+            _state.value = cur.copy(focusMode = true)
+            return
+        }
+        if (cur.phase == TimerPhase.RUNNING) {
+            breakFocus()
+            return
+        }
+        _state.value = cur.copy(focusMode = false)
     }
 
     fun start() {
@@ -145,12 +193,49 @@ object PomodoroTimer {
         }
     }
 
+    /** 开始 / 暂停。专注模式运行中禁止暂停（PWA onToggleClick）。 */
     fun toggle() {
-        if (_state.value.phase == TimerPhase.RUNNING) pause() else start()
+        val cur = _state.value
+        if (cur.lockedByFocusMode) return
+        if (cur.phase == TimerPhase.RUNNING) pause() else start()
     }
 
-    /** 重置；正向计时下等同于「结束并记录」。 */
+    /** 重置。专注模式运行中重置 = 中断专注（PWA onResetClick → runPunishment）。 */
     fun reset() {
+        val cur = _state.value
+        if (cur.lockedByFocusMode) {
+            breakFocus()
+            return
+        }
+        resetInternal()
+    }
+
+    /** 跳过当前阶段（仅计划模式在 UI 上暴露；不记录统计）。 */
+    fun skip() {
+        val cur = _state.value
+        if (cur.appMode != AppMode.PLAN) return
+        if (cur.phase == TimerPhase.READY) return
+        advance(record = false)
+    }
+
+    /** 强制结束专注模式（用户主动关闭 / 中断）。 */
+    private fun breakFocus() {
+        stopTick()
+        val cur = _state.value
+        val s = SettingsStore.settings.value
+        val total = minutesOf(cur.mode, s) * 60_000L
+        _state.value = cur.copy(
+            phase = TimerPhase.READY,
+            totalMs = total,
+            remainingMs = total,
+            elapsedMs = 0L,
+            planRound = 1,
+            focusMode = false,
+        )
+        _events.tryEmit(TimerEvent.FOCUS_BROKEN)
+    }
+
+    private fun resetInternal() {
         stopTick()
         val cur = _state.value
         val s = SettingsStore.settings.value
@@ -169,17 +254,6 @@ object PomodoroTimer {
             elapsedMs = 0L,
             planRound = 1,
         )
-    }
-
-    /** 跳过当前阶段（不记录统计）。 */
-    fun skip() {
-        val cur = _state.value
-        if (cur.appMode == AppMode.STOPWATCH) {
-            reset()
-            return
-        }
-        if (cur.phase == TimerPhase.READY) return
-        advance(record = false)
     }
 
     private fun startTick() {
@@ -222,7 +296,8 @@ object PomodoroTimer {
 
         if (record) {
             if (cur.mode == TimerMode.WORK) {
-                StatsStore.recordSession(s.workMinutes)
+                // 记录实际完成的时长（PWA: Math.round(totalMs / 60000)）
+                StatsStore.recordSession((cur.totalMs / 60_000L).toInt().coerceAtLeast(1))
                 _events.tryEmit(TimerEvent.WORK_DONE)
             } else {
                 _events.tryEmit(TimerEvent.BREAK_DONE)
@@ -253,7 +328,8 @@ object PomodoroTimer {
             remainingMs = total,
             elapsedMs = 0L,
         )
-        if (record && s.autoStartNext) start()
+        // 计划模式自动进入下一项（PWA nextPlanItem 1s 后 start）；单次模式按设置
+        if (record && (s.autoStartNext || cur.appMode == AppMode.PLAN)) start()
     }
 
     private fun minutesOf(mode: TimerMode, s: PomodoroSettings): Int =

@@ -131,8 +131,12 @@ fun MusicPage() {
                 onlineCount = catalog.size,
                 localCount = local.size + imports.size,
                 downloading = busy.isNotEmpty(),
+                pendingCount = catalog.count { !local.containsKey(it.file) },
                 refreshing = refreshing,
                 onRefresh = { MusicStore.refresh() },
+                onDownloadAll = {
+                    MusicStore.downloadAll(catalog.filter { !local.containsKey(it.file) })
+                },
                 onImport = { importer.launch(arrayOf("audio/*")) },
             )
             SegTabs(
@@ -198,8 +202,10 @@ private fun Header(
     onlineCount: Int,
     localCount: Int,
     downloading: Boolean,
+    pendingCount: Int,
     refreshing: Boolean,
     onRefresh: () -> Unit,
+    onDownloadAll: () -> Unit,
     onImport: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -209,6 +215,15 @@ private fun Header(
             if (downloading) {
                 Text("下载中…", color = PomoPrimary, fontSize = 12.sp)
                 Spacer(Modifier.width(8.dp))
+            }
+            if (pendingCount > 0) {
+                IconButton(onClick = onDownloadAll) {
+                    Icon(
+                        Icons.Filled.Download,
+                        contentDescription = "下载全部（$pendingCount 首）",
+                        tint = PomoPrimary,
+                    )
+                }
             }
             IconButton(onClick = onRefresh) {
                 Icon(
@@ -224,7 +239,7 @@ private fun Header(
             }
         }
         Text(
-            "V1 · 原生下载：曲库直接落盘到应用私有空间，飞行模式也能听",
+            "原生下载器：曲库落盘到应用私有空间（可一键下载全部），飞行模式也能听",
             color = PomoTextDim,
             fontSize = 12.sp,
         )
