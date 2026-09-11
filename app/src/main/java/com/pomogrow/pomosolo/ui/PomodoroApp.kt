@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
@@ -37,19 +38,25 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pomogrow.pomosolo.data.AuthStore
+import com.pomogrow.pomosolo.data.MusicStore
 import com.pomogrow.pomosolo.data.PomodoroSettings
 import com.pomogrow.pomosolo.data.PomodoroTimer
 import com.pomogrow.pomosolo.data.SettingsStore
+import com.pomogrow.pomosolo.data.StudyRoomStore
 import com.pomogrow.pomosolo.data.TimerEvent
 import com.pomogrow.pomosolo.player.PlayerController
+import com.pomogrow.pomosolo.player.Track
 import com.pomogrow.pomosolo.ui.theme.PomoBg
 import com.pomogrow.pomosolo.ui.theme.PomoPrimary
 import com.pomogrow.pomosolo.ui.theme.PomoSurface
 import com.pomogrow.pomosolo.ui.theme.PomoTextDim
+import kotlinx.coroutines.delay
 
 private const val TAB_FOCUS = 0
-private const val TAB_MUSIC = 1
-private const val TAB_SETTINGS = 2
+private const val TAB_STUDY = 1
+private const val TAB_MUSIC = 2
+private const val TAB_SETTINGS = 3
 
 /**
  * V1 应用骨架（对齐 PWA 可见页面）：
@@ -76,7 +83,7 @@ fun PomodoroApp() {
         }
     }
 
-    // 阶段完成/中断提醒：提示音 + 震动 + 文案
+    // 阶段完成/中断提醒：提示音 + 震动 + 文案（完成的番茄同时广播给自习室）
     LaunchedEffect(Unit) {
         PomodoroTimer.events.collect { event ->
             val settings = SettingsStore.settings.value
@@ -87,7 +94,46 @@ fun PomodoroApp() {
                 TimerEvent.FOCUS_BROKEN -> "专注已中断，本轮不计入统计"
             }
             if (event != TimerEvent.FOCUS_BROKEN) notifyFinish(context, settings)
+            if (event == TimerEvent.WORK_DONE) {
+                StudyRoomStore.broadcastPomoDone("work", settings.workMinutes)
+            }
             snackbar.showSnackbar(text)
+        }
+    }
+
+    // 自习室 · 同步听歌（听众侧）：收到 DJ 广播的状态 → 本地跟随播放
+    LaunchedEffect(Unit) {
+        StudyRoomStore.onServerMessage = { msg ->
+            if (msg.optString("type") == "music:sync_state") {
+                val songId = msg.optString("song_id")
+                val playing = msg.optBoolean("playing")
+                val position = msg.optLong("position_ms")
+                val room = StudyRoomStore.state.value
+                val me = AuthStore.state.value.user?.id.orEmpty()
+                if (songId.isNotBlank() && me.isNotEmpty() &&
+                    room.djUserId.isNotEmpty() && room.djUserId != me
+                ) {
+                    StudyRoomStore.markSynced(songId, playing, position)
+                    val uri = MusicStore.localUriByTitle(songId)
+                    if (uri != null) {
+                        // playQueue 后立刻 seek：Media3 会在 prepare 完成后应用该位置
+                        PlayerController.playQueue(listOf(Track(songId, uri)), 0)
+                        PlayerController.seekTo(position)
+                        // 刚 playQueue 已在播放，DJ 处于暂停态时跟随暂停
+                        if (!playing) PlayerController.toggle()
+                    }
+                }
+            }
+        }
+    }
+
+    // 自习室 · 同步听歌（DJ 侧）：本地播放状态变化 → 广播给房间
+    LaunchedEffect(now?.title, playing) {
+        val room = StudyRoomStore.state.value
+        val me = AuthStore.state.value.user?.id.orEmpty()
+        val title = now?.title
+        if (title != null && room.inRoom && me.isNotEmpty() && room.djUserId == me) {
+            StudyRoomStore.broadcastMusicState(title, playing, PlayerController.positionMs.value)
         }
     }
 
@@ -114,6 +160,7 @@ fun PomodoroApp() {
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
                 TAB_FOCUS -> FocusScreen()
+                TAB_STUDY -> StudyRoomScreen()
                 TAB_MUSIC -> MusicPage()
                 else -> SettingsScreen()
             }
@@ -140,6 +187,7 @@ fun PomodoroApp() {
 private fun PomoBottomBar(selected: Int, onSelect: (Int) -> Unit) {
     NavigationBar(containerColor = PomoSurface) {
         BottomItem(TAB_FOCUS, selected, onSelect, "专注", Icons.Filled.Timer)
+        BottomItem(TAB_STUDY, selected, onSelect, "自习室", Icons.Filled.Groups)
         BottomItem(TAB_MUSIC, selected, onSelect, "音乐", Icons.Filled.LibraryMusic)
         BottomItem(TAB_SETTINGS, selected, onSelect, "设置", Icons.Filled.Settings)
     }

@@ -276,6 +276,12 @@ object AuthStore {
 
     // ---------------- HTTP ----------------
 
+    /**
+     * 供其它模块复用的带鉴权 GET（自动带 Bearer、401 自动刷新重试）。
+     * 例如自习室房间列表 `GET /api/v1/rooms`。
+     */
+    suspend fun getJson(path: String): JSONObject? = call(path, "GET")
+
     private class HttpResult(val code: Int, val body: String)
 
     private suspend fun call(

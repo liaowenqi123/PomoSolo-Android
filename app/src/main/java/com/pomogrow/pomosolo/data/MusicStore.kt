@@ -126,6 +126,21 @@ object MusicStore {
     fun musicDirectory(): File = musicDir
 
     /**
+     * 按标题查本地可播放 uri（自习室同步听歌用：房间内以「标题」作为 song_id）。
+     * 先查内置/服务器曲库，再查本地导入与热榜下载。
+     */
+    fun localUriByTitle(title: String): String? {
+        if (title.isBlank()) return null
+        _catalog.value.firstOrNull { it.title == title }?.let { song ->
+            localUriString(song.file)?.let { return it }
+        }
+        _imports.value.firstOrNull { it.title == title }?.let { imp ->
+            localUriString(imp.file)?.let { return it }
+        }
+        return null
+    }
+
+    /**
      * 登记外部获取的音频（热榜下载器落盘的 m4a）进本地库并持久化，
      * 登记后它会出现在「本地音乐」里并可离线播放。
      */

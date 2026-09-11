@@ -24,7 +24,7 @@ PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自
 | **音乐热榜 + 爬虫下载**（Charts.vue / DownloadDialog / downloader.rs） | **热榜** tab（原生爬虫 + 音频提取） | ✅ |
 | SettingsPanel（计时、提醒、显示等） | **设置** tab | ✅（安卓适用项） |
 | 登录 / 账号面板（AuthPanel.vue） | **设置 → 账号**（登录 / 注册 / 会话 / admin Key 下发） | ✅ |
-| 自习室 StudyRoom（成员 / 同步听歌 / P2P 传歌） | — | ⏳ 待办 |
+| 自习室 StudyRoom（成员 / 聊天 / 同步听歌 / P2P 传歌） | **自习室** tab | ✅（传歌走服务器中转） |
 | 教程页 | — | ⏳ 待办 |
 | 桌面端专属（AI 助手 / 菜园子 / 前台检测 / 统计图表 / 太空旅行） | 依赖桌面环境 | 暂不做 |
 
@@ -38,7 +38,8 @@ PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自
 | **m2.2 · 热榜与番茄图标** | 音乐热榜（网易云 / QQ）原生爬取；单曲「爬虫 + 音频提取」下载器（B站搜索 → **DeepSeek LLM 选片** → DASH 音频流 → 落盘）；App 图标替换为番茄 | ✅ 完成 |
 | **m3 · 播放与计时体验** | 后台播放 + 系统通知、锁屏媒体控制(MediaSession)、下载续传/取消、计时前台服务 | 🚧 部分 |
 | **m4 · 账号体系** | REST 对接（注册 / 登录 / 刷新 / 登出 / 会话）、Token 持久化 + 401 自动刷新重试、连接测试、admin 的 DeepSeek Key 下发 | ✅ 完成 |
-| **m5 · 自习室与 P2P** | 自习室 WebSocket（成员 / 同步听歌）、P2P 传歌 | ⏳ 规划 |
+| **m5 · 自习室** | WebSocket 客户端（心跳 / 退避重连 / 4001 踢线处理）、房间列表 · 创建 · 加入、成员、聊天、番茄完成广播、DJ 同步听歌 | ✅ 完成 |
+| **m5.1 · P2P 传歌** | 服务器中转分片传歌；WebRTC DataChannel 直连（省服务器带宽、P2P 提速）待接入 | 🚧 部分 |
 
 ### 与 PWA 部门的关系（分工边界）
 
@@ -73,6 +74,7 @@ pomodoro/
 │   │   ├── DeepSeekClient.kt      # AI 选片：对齐桌面端 deepseek_select（提示词/温度/解析完全一致）
 │   │   ├── AiPickStore.kt         # AI 选片配置（开关 / API Key / 模型 / 来源），本机持久化
 │   │   ├── AuthStore.kt           # 账号体系：注册/登录/刷新/登出/会话 + admin Key 下发
+│   │   ├── StudyRoomStore.kt      # 自习室 WebSocket：房间/成员/聊天/DJ 同步听歌
 │   │   ├── SongDownloader.kt      # 单曲下载器：搜索 → AI 选片 → 提取 → 落盘 → 登记本地库（串行队列）
 │   │   ├── PomodoroSettings.kt    # 设置（时长、计划轮数、自动开始、提醒、常亮…）
 │   │   ├── StatsStore.kt          # 统计（今日完成 / 累计专注分钟，跨天自动重置）
@@ -87,6 +89,7 @@ pomodoro/
 │       ├── ChartsTab.kt           # 热榜页（来源切换 + 榜单 + 下载/进度/重试）
 │       ├── SettingsScreen.kt      # 设置页（含账号入口）
 │       ├── AuthScreen.kt          # 账号页（登录 / 注册 / 已登录信息 / 连接测试）
+│       ├── StudyRoomScreen.kt     # 自习室页（房间列表 / 创建 / 加入 / 成员 / 聊天 / DJ）
 │       └── PlayerUi.kt            # 迷你播放条 + 展开播放面板
 ├── app/src/main/res/mipmap-*/     # 番茄图标（含自适应图标 mipmap-anydpi-v26）
 ├── app/src/main/assets/tracks/    # 3 首内置 mp3（内容种子，首启拷入私有目录）
@@ -194,6 +197,43 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
 > 实测（2026-09-11）：`GET /api/status` → 200（服务 v1.0.0）；无 token 访问 `/auth/session` → 401
 > `{"error":"未登录"}`；空参数登录 → 400 `{"error":"用户名和密码不能为空"}` —— 与客户端错误处理一致。
 
+### 自习室（m5，WebSocket）
+
+入口：底部导航 **自习室** tab（需先在设置里登录）。
+
+协议权威：`server-planning/ws_server.py` 与 `EXTERNAL-INTERFACES.md` §3–§8；
+客户端行为对齐 PWA `src/pwa/ws.ts`：
+
+| 项 | 实现 |
+|----|------|
+| 连接 | `wss://api.pomogrow.top/ws?token=<access_token>`（token 走 query） |
+| 请求-响应 | 带 `id` 的消息等待服务器回同名 id，8s 超时（创建/加入房间等） |
+| 广播 | 不带 id（聊天、番茄广播、同步听歌状态） |
+| 心跳 | 每 10s 发 `{"type":"ping"}` → 服务器回 `pong` |
+| 重连 | 指数退避 1s×2^n（上限 15s），重连前先刷新 access token |
+| 踢线 | 关闭码 **4001 = 同账号异地登录**，停止自动重连，避免双端互踢死循环 |
+| 房间列表 | REST `GET /api/v1/rooms`（复用账号 token，401 自动刷新） |
+
+已实现功能：
+- **房间**：公开列表（含人数 / 是否需要密码 / 房主）、创建（名称/描述/密码）、按 ID 加入、离开；
+- **成员**：`room:members` 快照 + `member_joined/left/status` 增量，在线状态圆点；DJ 成员带 🎧；
+- **聊天**：`room:chat` 收发，气泡区分自己/他人，自动滚到底部，保留最近 200 条；
+- **番茄广播**：本机完成一个番茄 → `room:pomo_done`，房间内显示「XX 完成了一个番茄 🍅」；
+- **同步听歌（DJ 模式）**：任何人可「申请当 DJ」（最后申请者即 DJ）；DJ 端本地播放状态变化 →
+  广播 `music:sync_state`（song_id 用曲目标题）；听众端收到后**若本地已有该曲目**则跟随播放并
+  对齐进度；未下载的曲目会提示（等 P2P 传歌补齐）。
+
+**P2P 传歌**：桌面端走 WebRTC DataChannel 直连（`peer:offer/answer/ice/bye` 信令 + `music:request_song`
+/`music:offer_song` 分片），Android 直连需要 WebRTC native 库（数 MB，`.so`）。
+当前策略是**先走服务器中转降级路径**（纯 OkHttp + Kotlin，无需 WebRTC），WebRTC 直连列入 m5.1。
+
+> 探测记录（2026-09-11，本机）：REST 全部可用（`/api/status` 200、`/auth/session` 401 等）；
+> 但 `wss://api.pomogrow.top/ws` 在本机连续两次握手 12s 超时（`state=Connecting`）。
+> 可能原因：本机网络对 WS 升级的限制，或服务器 `/ws` 反代尚未就绪
+> （`/api/status` 返回 `"ws_port": 3001`，提示 WS 有独立端口）。
+> **建议在手机真机上验证**；若仍不通，请与服务器部门确认 `/ws` 的 Nginx 反代配置
+> （PWA 生产环境同样依赖该反代，`src/pwa/ws.ts` 有同款说明）。
+
 ## 行为对齐说明（PWA / 桌面端 → 安卓）
 
 | 行为 | 原始实现 | 安卓实现 |
@@ -220,7 +260,8 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
 - **计时后台**：切后台回到前台时间准确（时间戳基准），但无系统通知/悬浮计时（m3 前台服务）；
 - **计划模式形态差异**：PWA 的计划是「可自由增删的任务列表」，安卓当前是「N 轮 × 固定时长」简化版；
 - 服务器曲库目前仅 3 首内置曲；曲库扩展由服务器侧决定；
-- **账号体系已就绪**（m4）；自习室 WS / P2P 传歌（m5）、教程页仍未做；
+- **账号体系（m4）与自习室（m5）已就绪**；P2P 直连传歌（WebRTC，m5.1）与教程页待做；
+- 自习室同步听歌目前只在「听众本地已有该曲目」时跟随播放；缺歌需要 P2P 传歌补齐（m5.1）；
 - Token 以明文存于应用私有的 SharedPreferences（Android 沙箱隔离）；如需更强保护可换
   EncryptedSharedPreferences + Keystore。
 
