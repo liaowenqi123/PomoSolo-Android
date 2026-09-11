@@ -256,29 +256,45 @@ private fun InRoomContent(state: StudyRoomState) {
 
     Column(Modifier.fillMaxSize()) {
         // 成员（横向）
-        LazyRow(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(state.members, key = { it.userId }) { m ->
-                Row(
-                    Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(PomoSurface)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        Modifier.size(8.dp).clip(CircleShape)
-                            .background(if (m.online) PomoGreen else PomoTextDim),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        m.username + if (m.userId == state.djUserId) " 🎧" else "",
-                        color = PomoText,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                    )
+        Text(
+            "👥 在线成员 (${state.members.size})",
+            color = PomoTextDim,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        if (state.members.isEmpty()) {
+            Text(
+                "正在同步成员列表…",
+                color = PomoTextDim,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        } else {
+            LazyRow(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(state.members, key = { it.userId }) { m ->
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(PomoSurface)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier.size(8.dp).clip(CircleShape)
+                                .background(if (m.online) PomoGreen else PomoTextDim),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            m.username + if (m.userId == state.djUserId) " 🎧" else "",
+                            color = PomoText,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }

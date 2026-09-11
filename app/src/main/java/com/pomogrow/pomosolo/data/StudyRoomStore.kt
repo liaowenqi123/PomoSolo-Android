@@ -81,6 +81,12 @@ object StudyRoomStore {
     private const val REQUEST_TIMEOUT_MS = 8_000L
     private const val MAX_CHAT = 200
 
+    /** 房间级心跳（对齐桌面端 HEARTBEAT_INTERVAL_MS = 5s）：ping{room_id} 保活。 */
+    private const val ROOM_PING_MS = 5_000L
+
+    /** 房间级状态同步（对齐桌面端 REFRESH_INTERVAL_MS = 15s）：presence:update。 */
+    private const val PRESENCE_MS = 15_000L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val client: OkHttpClient by lazy {
@@ -96,10 +102,18 @@ object StudyRoomStore {
     private var socket: WebSocket? = null
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
+    private var roomPingJob: Job? = null
+    private var presenceJob: Job? = null
     private var attempt = 0
     private var idCounter = 1
     private val pending = mutableMapOf<Int, (JSONObject?, String?) -> Unit>()
     private var manualClosed = false
+
+    /** join 响应回来之前先到的 room:members 快照（对齐桌面端 pendingMembers 缓存）。 */
+    private var pendingMembers: List<RoomMember>? = null
+
+    /** 自愈重进房间的节流时间戳。 */
+    private var lastRejoinAt = 0L
 
     /** 收到的原始消息回调（供外部模块消费，例如同步听歌 / 传歌）。 */
     var onServerMessage: ((JSONObject) -> Unit)? = null
@@ -144,6 +158,12 @@ object StudyRoomStore {
             attempt = 0
             _state.value = _state.value.copy(connected = true, connecting = false, kicked = false)
             startHeartbeat()
+            // 断线重连后自动回到原房间（对齐桌面端 autoReconnect）并恢复房间级定时器
+            val roomId = _state.value.roomId
+            if (roomId.isNotEmpty()) {
+                send("room:join", JSONObject().put("room_id", roomId), withId = false)
+                startRoomTimers(roomId)
+            }
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -187,6 +207,8 @@ object StudyRoomStore {
             heartbeatJob = null
             socket = null
         }
+        // 房间级定时器在断线期间没有意义；重连成功后 onOpen 会重新 join 并重启
+        stopRoomTimers()
         settleAll("连接已断开")
         val kicked = code == 4001
         _state.value = _state.value.copy(
@@ -335,12 +357,10 @@ object StudyRoomStore {
                 return@send
             }
             val room = msg?.optJSONObject("room")
-            _state.value = _state.value.copy(
+            enterRoom(
                 roomId = room?.optString("id").orEmpty(),
                 roomName = room?.optString("name") ?: name,
-                chat = emptyList(),
-                members = emptyList(),
-                message = "房间已创建",
+                note = "房间已创建",
             )
         }
     }
@@ -358,14 +378,91 @@ object StudyRoomStore {
                 return@send
             }
             val room = _state.value.rooms.firstOrNull { it.id == roomId.trim() }
-            _state.value = _state.value.copy(
+            enterRoom(
                 roomId = roomId.trim(),
                 roomName = room?.name ?: "自习室",
-                chat = emptyList(),
-                members = emptyList(),
-                message = "已加入房间",
+                note = "已加入房间",
             )
         }
+    }
+
+    /**
+     * 进入房间视图：应用缓存的成员快照（join 时服务端已广播 room:members），
+     * 否则乐观加入自己 —— 避免进房瞬间显示"空无一人"（对齐桌面端 enterRoom）。
+     * 同时启动房间级定时器（5s ping 保活 + 15s presence:update 状态同步）。
+     */
+    private fun enterRoom(roomId: String, roomName: String, note: String) {
+        if (roomId.isBlank()) {
+            fail("服务器未返回房间 ID")
+            return
+        }
+        val me = AuthStore.state.value.user
+        val cached = pendingMembers
+        val members = when {
+            cached != null -> cached
+            me != null -> listOf(RoomMember(me.id, me.username, true))
+            else -> emptyList()
+        }
+        pendingMembers = null
+        _state.value = _state.value.copy(
+            roomId = roomId,
+            roomName = roomName,
+            chat = emptyList(),
+            members = members,
+            message = note,
+        )
+        // 进房立刻同步一次在线状态（服务端会广播 room:member_status）
+        send(
+            "presence:update",
+            JSONObject().put("status", "idle").put("room_id", roomId),
+            withId = false,
+        )
+        startRoomTimers(roomId)
+    }
+
+    /**
+     * 房间级保活/同步定时器（对齐桌面端 StudyRoom.vue）：
+     *  - 5s：`ping{room_id}`（study_room_update_status）—— 高频保活，防代理/NAT 掐断；
+     *  - 15s：`presence:update{status, room_id}`（study_room_get_members 的触发方式）
+     *    —— 服务端据此广播 room:member_status，成员在线状态保持新鲜。
+     */
+    private fun startRoomTimers(roomId: String) {
+        stopRoomTimers()
+        roomPingJob = scope.launch {
+            while (true) {
+                delay(ROOM_PING_MS)
+                if (_state.value.roomId != roomId) break
+                send("ping", JSONObject().put("room_id", roomId), withId = false)
+            }
+        }
+        presenceJob = scope.launch {
+            while (true) {
+                delay(PRESENCE_MS)
+                if (_state.value.roomId != roomId) break
+                send(
+                    "presence:update",
+                    JSONObject().put("status", "idle").put("room_id", roomId),
+                    withId = false,
+                )
+            }
+        }
+    }
+
+    private fun stopRoomTimers() {
+        roomPingJob?.cancel()
+        roomPingJob = null
+        presenceJob?.cancel()
+        presenceJob = null
+    }
+
+    /** 自愈：收到成员快照却发现自己不在其中 → 重新 join（5s 节流，防抖）。 */
+    private fun rejoinIfMissing(members: List<RoomMember>) {
+        val me = AuthStore.state.value.user?.id ?: return
+        if (members.isEmpty() || members.any { it.userId == me }) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastRejoinAt < 5_000L) return
+        lastRejoinAt = now
+        send("room:join", JSONObject().put("room_id", _state.value.roomId), withId = false)
     }
 
     fun leaveRoom() {
@@ -377,6 +474,8 @@ object StudyRoomStore {
                 withId = false,
             )
         }
+        stopRoomTimers()
+        pendingMembers = null
         _state.value = _state.value.copy(
             roomId = "",
             roomName = "",
@@ -445,7 +544,14 @@ object StudyRoomStore {
                         ),
                     )
                 }
-                _state.value = _state.value.copy(members = list)
+                if (_state.value.roomId.isEmpty()) {
+                    // join 响应还没回来：先缓存，进房时应用
+                    //（否则会被 join 回调的初始化覆盖成空列表 → 人数显示为 0）
+                    pendingMembers = list
+                } else {
+                    _state.value = _state.value.copy(members = list)
+                    rejoinIfMissing(list)
+                }
             }
 
             "room:member_joined" -> {
