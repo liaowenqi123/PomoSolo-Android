@@ -1,30 +1,31 @@
-[安卓端部门] feat: m5.1 P2P 直连（WebRTC 传输层）+ 视觉修正（MuMu 实机逐屏核对）
+[安卓端部门] feat: P2P 打洞测试工具（与桌面端互通，可 Android↔桌面 互测）
 
-═══ 1. 自测环境（本轮建立，可复用）═══
-- MuMu 模拟器 adb 端口 127.0.0.1:16448（Android 15 / x86_64 / 900x1600 / 320dpi），
-  该环境下 `adb shell input tap` 生效，可逐屏点测（headless AVD 的 input 不生效）；
-- 流程：install → am start → input tap 切 tab → screencap → 拉回逐屏核对。
+协议依据（主仓库）：server-planning/ws_server.py 的 handle_p2p_* （p2p:online / test_request /
+test_result / reverse_test_request / bidir_test_request，服务端只做定向转发 + 加 from_user_id）、
+桌面端 src/api/p2pTest.ts、src-tauri/src/commands/p2p.rs、src/components/P2PTestPanel.vue、src/p2p.ts。
 
-═══ 2. m5.1 P2P 直连（WebRTC）═══
-- 依赖：io.github.webrtc-sdk:android:125.6422.07（libwebrtc 预编译 + Java 绑定，BSD），
-  abiFilters = {arm64-v8a, x86_64}（保留 x86_64 以便模拟器自测）；
-  实测 APK 32.13MB → 55.35MB（两个 ABI）。
-- 新增 data/P2PTransfer.kt（协议对齐桌面端/PWA 的 src/p2p.ts）：
-  PeerConnection + DataChannel("p2p", ordered)、4×STUN（无 TURN）、
-  控制消息 meta{t,size,totalChunks,chunkSize}、数据帧 4 字节大端 index + payload、
-  128KB 分片、bufferedAmount 背压、ICE 候选缓冲（remoteDescription 前先缓存）、
-  打洞失败提示可回退服务器中转。
-- StudyRoomStore：注入 sendSignal（走现有 WS 发 peer:offer/answer/ice + to_user_id），
-  并把收到的 peer:* 转给 P2PTransfer.onSignal。
-- StudyRoomScreen：房内点其他成员 → 发起 P2P 直连测速（2MB 随机数据），
-  成员区下方实时显示「P2P 发送/接收 · 已传 KB / 总 KB · Mbps · 已直连/打洞中」，
-  结果提示 4 秒自动清除。
-- MainActivity 初始化 P2PTransfer。
-- MuMu 实机验证：安装启动正常、WebRTC 原生库加载无崩溃（真打洞需两台设备同房间互测）。
+改造 data/P2PTransfer.kt（支持多连接与双向测速）：
+- 会话按 `peerId:tag` 路由（对齐桌面端路由键），支持同一对端多条并发连接；
+- 信令 peer:offer/answer/ice 均带 `tag` 原样透传；收到 offer 时优先复用已挂起接收会话；
+- 实现 duplex-test 时序（与桌面端一致）：offerer 推完发 `duplex_switch` 等 `duplex_done`；
+  answerer 收到 switch 后推第二程、推完发 `duplex_done` 并结束；
+- 数据源可注入（真实文件）或随机数据（测速），64KB 分片 + 4 字节大端序号 + bufferedAmount 背压；
+- 结果按桌面端字段返回：ok / ms / speed_bps / bytes / error。
 
-═══ 3. 视觉修正（MuMu 实拍发现）═══
-- 关掉的 Switch 与卡片底色糊在一起、看起来像"禁用" → 指定 uncheckedThumb/Track/Border 颜色；
-- 其余沿用上一轮的边到边 + 圆环内圈 + 白底红字激活态等改动，MuMu 上逐屏确认无回归
-  （专注/自习室/音乐/设置四页均正常，账号页显示「已登录 · admin · Key 由服务器下发」）。
+新增 data/P2PTestStore.kt（测试业务）：
+- refreshUsers()：`p2p:online`（带 id 请求-响应，8s 超时）→ 在线用户列表（camelCase userId/username）；
+- runFullTest(user)：A（`p2p:test_request` tag=a，本机 offerer）→ B（`p2p:reverse_test_request`
+  tag=b，本机挂起作 answerer）两轮，逐轮刷新结果；
+- 被动应答：收到 p2p:test_request / reverse_test_request / bidir_test_request 自动建连接收或发送，
+  完成后 `p2p:test_result` 回传；收到对端结果时在界面提示（双方视角可见）。
 
-构建：BUILD SUCCESSFUL；已在 MuMu 安装运行。
+新增 ui/P2PTestScreen.kt + 设置页入口（设置 → 调试 → P2P 打洞测试）：
+- 在线用户列表（点用户开始测试）、实时进度（已传 KB / Mbps / 已直连或打洞中）、
+  结果卡片（↑ 上行 / ↓ 下行 / 详情）、提示条（固定高度、6s 自动清除）。
+- 该页无需进自习室，只要双方登录并保持 WS 在线即可互测。
+
+其它：StudyRoomStore 新增 request()（请求-响应发送）并把 p2p:* 分发给 P2PTestStore；
+README 的 m5.1 小节补充测试工具说明。
+
+构建：BUILD SUCCESSFUL；MuMu（Android 15 / x86_64）安装运行正常，设置页入口与 AI 选片配置显示正常
+（顺带确认上一轮 Switch 关闭态对比度修正生效）。

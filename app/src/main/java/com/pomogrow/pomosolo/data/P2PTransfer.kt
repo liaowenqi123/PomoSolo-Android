@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,35 +25,50 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.random.Random
 
-/** P2P 传输进度（发送/接收共用，视角色而定）。 */
+/** 一次 P2P 传输的结果（对齐桌面端 `p2p:test_result` 的字段）。 */
+data class P2PResult(
+    val ok: Boolean,
+    val ms: Long,
+    val speedBps: Long,
+    val bytes: Long,
+    val error: String? = null,
+)
+
+/** UI 展示用的实时状态。 */
 data class P2PProgress(
     val active: Boolean = false,
     val peerId: String = "",
+    val role: String = "",
     val transferredBytes: Long = 0,
     val totalBytes: Long = 0,
     val speedBps: Long = 0,
     val connected: Boolean = false,
-    val role: String = "",
 )
 
 /**
  * P2P 数据传输（WebRTC DataChannel），协议对齐桌面端/PWA 的 `src/p2p.ts`：
  *
- *  - 信令走现有 WS：`peer:offer` / `peer:answer` / `peer:ice`（服务端只做定向转发，带 `tag` 区分并发连接）；
- *  - ICE：4 个 STUN 并行（cloudflare / miwifi / bilibili / google），**无 TURN**
- *    —— 对称 NAT 下可能打不通，由上层回退服务器中转（`music:request_song` 等）；
+ *  - 信令走现有 WS：`peer:offer/answer/ice`（服务端按 to_user_id 定向转发，附加 from_user_id，
+ *    `tag` 原样透传）——同一条连接用 `peerId:tag` 作为路由键，支持同一对端多条并发连接；
  *  - DataChannel：label `"p2p"`、ordered/reliable；
- *  - 控制消息（String JSON）：`{"t":"meta","size":N,"totalChunks":M,"chunkSize":K}`；
- *  - 数据帧（Binary）：**4 字节大端 chunk index + payload**，128KB/片；
- *  - 背压：`bufferedAmount` 超过阈值即等待，避免发送端缓冲溢出静默死亡。
+ *  - 控制消息（String JSON）：`{"t":"meta","size":N,"totalChunks":M,"chunkSize":K}`、
+ *    `{"t":"duplex_switch"}`、`{"t":"duplex_done"}`；
+ *  - 数据帧（Binary）：**4 字节大端 chunk index + payload**；
+ *  - 背压：`bufferedAmount` 超阈值时等待，避免缓冲溢出导致发送端静默死亡。
  *
- * 为什么要引入 native 库：PWA/桌面端跑在浏览器/WebView 里，WebRTC 是内核自带的；
- * 原生 Android 没有浏览器内核，必须自带 libwebrtc（`io.github.webrtc-sdk:android`）。
+ * 支持两种模式：
+ *  - 单向（默认）：offerer 推送、answerer 接收；
+ *  - **duplex-test**（桌面端测试工具用的模式）：同一连接先由 offerer 推一程，
+ *    完成后发 `duplex_switch`，answerer 再推一程，完成后发 `duplex_done` —— 一条连接测双方向。
+ *
+ * 为什么需要 native 库：PWA/桌面端跑在浏览器/WebView 内，WebRTC 是内核自带的；
+ * 原生 Android 无浏览器内核，只能自带 libwebrtc。
  */
 object P2PTransfer {
 
-    private const val CHUNK_SIZE = 128 * 1024
+    private const val CHUNK_SIZE = 64 * 1024
     private const val BACKPRESSURE_BYTES = 4L * 1024 * 1024
+    private const val OFFER_WAIT_MS = 12_000L
 
     private val STUN_URLS = listOf(
         "stun:stun.cloudflare.com:3478",
@@ -78,16 +94,37 @@ object P2PTransfer {
     /** 由 StudyRoomStore 注入：把信令发到房间（服务端定向转发给 to_user_id）。 */
     var sendSignal: ((type: String, toUserId: String, payload: JSONObject) -> Unit)? = null
 
-    private var pc: PeerConnection? = null
-    private var dc: DataChannel? = null
-    private var peerId = ""
-    private var isOfferer = false
-    private var totalBytes = 0L
-    private var transferred = 0L
-    private var startedAt = 0L
-    private var readChunk: ((Int) -> ByteArray)? = null
-    private var onChunk: ((Int, ByteArray) -> Unit)? = null
-    private var pendingCandidates = mutableListOf<IceCandidate>()
+    // ---------------- 会话 ----------------
+
+    private class Session(val key: String, val peerId: String, val tag: String) {
+        var pc: PeerConnection? = null
+        var dc: DataChannel? = null
+        var isOfferer = false
+        var duplex = false
+        var totalBytes = 0L
+        var chunkSize = CHUNK_SIZE
+        var pushed = 0L
+        var received = 0L
+        var pushStartedAt = 0L
+        var recvStartedAt = 0L
+        var pushDone = false
+        var peerPushDone = false
+        var localDescriptionSet = false
+        var answerSent = false
+        var readChunk: ((Int) -> ByteArray)? = null
+        var onResult: ((P2PResult) -> Unit)? = null
+        var onProgress: ((Long, Long) -> Unit)? = null
+        var offerTimeout: Job? = null
+        val pendingCandidates = mutableListOf<IceCandidate>()
+        var finished = false
+    }
+
+    private val sessions = mutableMapOf<String, Session>()
+
+    /** 等待对端 offer 的接收端（answerer 挂起，12s 超时）。 */
+    private val pendingReceivers = mutableMapOf<String, Session>()
+
+    private fun key(peerId: String, tag: String) = "$peerId:$tag"
 
     fun init(context: Context) {
         if (factory != null) return
@@ -98,67 +135,130 @@ object P2PTransfer {
         factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
     }
 
-    // ---------------- 对外入口 ----------------
-
     /**
-     * 发起一次 P2P 传输（offerer = 发送方）。
-     * [readChunk] 按分片序号返回原始字节；[totalBytes] 决定分片总数。
+     * 发起一次双向测速（offerer）。
+     * 对端需已通过 `p2p:test_request` 挂起接收（桌面端会自动挂起）。
      */
-    fun startSend(toUserId: String, readChunk: (Int) -> ByteArray, totalBytes: Long) {
-        val f = factory ?: run {
-            _message.value = "WebRTC 未初始化"
-            return
-        }
-        close()
-        peerId = toUserId
-        isOfferer = true
-        this.readChunk = readChunk
-        this.totalBytes = totalBytes
-        transferred = 0L
-        startedAt = SystemClock.elapsedRealtime()
-        _progress.value = P2PProgress(active = true, peerId = toUserId, totalBytes = totalBytes, role = "发送")
-
-        pc = f.createPeerConnection(rtcConfig(), observer)
-        val init = DataChannel.Init().apply { ordered = true }
-        dc = pc?.createDataChannel("p2p", init)?.also { wireChannel(it) }
-
-        pc?.createOffer(sdpObserver, MediaConstraints())
-    }
-
-    /** 收到对端 offer（answerer = 接收方）。 */
-    private fun acceptOffer(fromUserId: String, sdp: String) {
-        val f = factory ?: return
-        close()
-        peerId = fromUserId
-        isOfferer = false
-        transferred = 0L
-        startedAt = SystemClock.elapsedRealtime()
-        _progress.value = P2PProgress(active = true, peerId = fromUserId, role = "接收")
-
-        pc = f.createPeerConnection(rtcConfig(), observer)
-        pc?.setRemoteDescription(
-            sdpObserver,
-            SessionDescription(SessionDescription.Type.OFFER, sdp),
+    fun startDuplexTest(
+        peerId: String,
+        tag: String,
+        bytes: Long = 2L * 1024 * 1024,
+        onResult: (P2PResult) -> Unit,
+    ) {
+        val total = bytes.toInt()
+        send(
+            peerId = peerId,
+            tag = tag,
+            totalBytes = bytes,
+            readChunk = { index ->
+                val start = index * CHUNK_SIZE
+                val len = minOf(CHUNK_SIZE, total - start)
+                Random.nextBytes(ByteArray(len))
+            },
+            onResult = onResult,
         )
     }
 
-    /** 服务端转发来的 peer:* 信令。 */
-    fun onSignal(msg: JSONObject) {
-        val from = msg.optString("from_user_id")
-        when (msg.optString("type")) {
-            "peer:offer" -> {
-                val sdp = msg.optJSONObject("sdp")?.optString("sdp").orEmpty()
-                if (sdp.isNotBlank()) acceptOffer(from, sdp)
-            }
+    /** 发起传输（offerer；duplex=true 时使用双向测速时序）。 */
+    fun send(
+        peerId: String,
+        tag: String,
+        totalBytes: Long,
+        readChunk: (Int) -> ByteArray,
+        duplex: Boolean = true,
+        onResult: (P2PResult) -> Unit,
+    ) {
+        val f = factory ?: run {
+            onResult(P2PResult(false, 0, 0, 0, "WebRTC 未初始化"))
+            return
+        }
+        val k = key(peerId, tag)
+        closeSession(k)
+        val session = Session(k, peerId, tag).apply {
+            isOfferer = true
+            this.duplex = duplex
+            this.totalBytes = totalBytes
+            this.chunkSize = CHUNK_SIZE
+            this.readChunk = readChunk
+            this.onResult = onResult
+            pushStartedAt = SystemClock.elapsedRealtime()
+        }
+        sessions[k] = session
+        _progress.value = P2PProgress(
+            active = true, peerId = peerId, role = "发送",
+            totalBytes = totalBytes,
+        )
 
+        session.pc = f.createPeerConnection(rtcConfig(), observer(session))
+        val init = DataChannel.Init().apply { ordered = true }
+        session.dc = session.pc?.createDataChannel("p2p", init)?.also { wireChannel(session, it) }
+        session.pc?.createOffer(sdpObserver(session), MediaConstraints())
+    }
+
+    /**
+     * 挂起等待对端 offer（answerer）。对齐桌面端 `p2pReceive`：桌面端收到
+     * `p2p:test_request` 后会自动挂起，因此安卓发起时对端已就绪；反之亦然。
+     */
+    fun receive(
+        peerId: String,
+        tag: String,
+        timeoutMs: Long = OFFER_WAIT_MS,
+        onResult: (P2PResult) -> Unit,
+    ) {
+        val k = key(peerId, tag)
+        closeSession(k)
+        val session = Session(k, peerId, tag).apply {
+            isOfferer = false
+            duplex = true
+            this.onResult = onResult
+        }
+        pendingReceivers[k] = session
+        session.offerTimeout = scope.launch {
+            delay(timeoutMs)
+            if (pendingReceivers.remove(k) != null && !session.finished) {
+                session.finished = true
+                onResult(P2PResult(false, 0, 0, 0, "等待对端 offer 超时（${timeoutMs / 1000}s）"))
+            }
+        }
+    }
+
+    /** 服务端转发来的 peer:* 信令（按 peerId:tag 路由）。 */
+    fun onSignal(msg: JSONObject) {
+        val f = factory ?: return
+        val from = msg.optString("from_user_id")
+        val tag = msg.optString("tag")
+        val k = key(from, tag)
+        val type = msg.optString("type")
+
+        if (type == "peer:offer") {
+            val sdp = msg.optJSONObject("sdp")?.optString("sdp").orEmpty()
+            if (sdp.isBlank()) return
+            // 优先复用已挂起的接收会话；没有挂起则直接接受（兼容未预告的 offer）
+            val session = pendingReceivers.remove(k) ?: Session(k, from, tag).also {
+                it.isOfferer = false
+                it.duplex = true
+                sessions[k] = it
+            }
+            session.offerTimeout?.cancel()
+            sessions[k] = session
+            session.pc = f.createPeerConnection(rtcConfig(), observer(session))
+            session.pc?.setRemoteDescription(
+                sdpObserver(session),
+                SessionDescription(SessionDescription.Type.OFFER, sdp),
+            )
+            _progress.value = P2PProgress(active = true, peerId = from, role = "接收")
+            return
+        }
+
+        val session = sessions[k] ?: return
+        when (type) {
             "peer:answer" -> {
                 val sdp = msg.optJSONObject("sdp")?.optString("sdp").orEmpty()
-                if (sdp.isNotBlank()) {
-                    pc?.setRemoteDescription(
-                        sdpObserver,
-                        SessionDescription(SessionDescription.Type.ANSWER, sdp),
-                    )
-                }
+                if (sdp.isBlank()) return
+                session.pc?.setRemoteDescription(
+                    sdpObserver(session),
+                    SessionDescription(SessionDescription.Type.ANSWER, sdp),
+                )
             }
 
             "peer:ice" -> {
@@ -168,9 +268,9 @@ object P2PTransfer {
                     c.optInt("sdpMLineIndex", 0),
                     c.optString("candidate"),
                 )
-                val connection = pc ?: return
+                val connection = session.pc ?: return
                 if (connection.remoteDescription == null) {
-                    pendingCandidates.add(candidate)
+                    session.pendingCandidates.add(candidate)
                 } else {
                     connection.addIceCandidate(candidate)
                 }
@@ -178,25 +278,33 @@ object P2PTransfer {
         }
     }
 
-    /** 便捷：随机数据连通性/速度测试（对齐桌面端 P2P 测试工具）。 */
+    /** 兼容自习室里的"点成员发起测速"（单连接、非 duplex）。 */
     fun startSpeedTest(toUserId: String, sizeBytes: Long = 2L * 1024 * 1024) {
-        val total = sizeBytes.toInt()
-        startSend(toUserId, readChunk = { index ->
-            val start = index * CHUNK_SIZE
-            val len = minOf(CHUNK_SIZE, total - start)
-            Random.nextBytes(ByteArray(len))
-        }, totalBytes = sizeBytes.toLong())
+        startDuplexTest(toUserId, tag = "app-test", bytes = sizeBytes) { result ->
+            _message.value = if (result.ok) {
+                "P2P 测速完成：%.1f Mbps（%.1f MB / %d ms）".format(
+                    result.speedBps / 1024.0 / 1024.0 * 8,
+                    result.bytes / 1024.0 / 1024.0,
+                    result.ms,
+                )
+            } else {
+                "P2P 测速失败：${result.error ?: "未知原因"}"
+            }
+        }
     }
 
     fun close() {
-        runCatching { dc?.close() }
-        runCatching { pc?.close() }
-        dc = null
-        pc = null
-        readChunk = null
-        onChunk = null
-        pendingCandidates.clear()
-        _progress.value = _progress.value.copy(active = false, connected = false)
+        sessions.keys.toList().forEach { closeSession(it) }
+        pendingReceivers.clear()
+        _progress.value = P2PProgress()
+    }
+
+    private fun closeSession(k: String) {
+        sessions.remove(k)?.let { s ->
+            s.offerTimeout?.cancel()
+            runCatching { s.dc?.close() }
+            runCatching { s.pc?.close() }
+        }
     }
 
     // ---------------- 内部 ----------------
@@ -210,18 +318,16 @@ object P2PTransfer {
         }
     }
 
-    private fun wireChannel(channel: DataChannel) {
-        dc = channel
+    private fun wireChannel(session: Session, channel: DataChannel) {
+        session.dc = channel
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
 
             override fun onStateChange() {
-                val state = channel.state()
-                if (state == DataChannel.State.OPEN) {
+                if (channel.state() == DataChannel.State.OPEN) {
+                    session.recvStartedAt = SystemClock.elapsedRealtime()
                     _progress.value = _progress.value.copy(connected = true)
-                    if (isOfferer) pumpSend()
-                } else if (state == DataChannel.State.CLOSED) {
-                    _progress.value = _progress.value.copy(active = false, connected = false)
+                    if (session.isOfferer) pushChunkBurst(session)
                 }
             }
 
@@ -230,137 +336,178 @@ object P2PTransfer {
                 buffer.data.get(bytes)
                 if (buffer.binary) {
                     if (bytes.size < 4) return
-                    val index = ByteBuffer.wrap(bytes, 0, 4).order(ByteOrder.BIG_ENDIAN).int
-                    val payload = bytes.copyOfRange(4, bytes.size)
-                    transferred += payload.size
-                    onChunk?.invoke(index, payload)
-                    updateProgress()
+                    session.received += (bytes.size - 4)
+                    onProgressTick(session)
                 } else {
-                    // 控制消息（meta 等）
-                    val text = String(bytes, Charsets.UTF_8)
-                    runCatching {
-                        val json = JSONObject(text)
-                        if (json.optString("t") == "meta") {
-                            totalBytes = json.optLong("size")
-                            _progress.value = _progress.value.copy(totalBytes = totalBytes)
-                        }
-                    }
+                    handleControl(session, String(bytes, Charsets.UTF_8))
                 }
             }
         })
     }
 
-    /** 发送端：meta + 逐片发送（带背压）。 */
-    private fun pumpSend() {
-        val reader = readChunk ?: return
-        val total = totalBytes
+    private fun handleControl(session: Session, text: String) {
+        val json = runCatching { JSONObject(text) }.getOrNull() ?: return
+        when (json.optString("t")) {
+            "meta" -> {
+                session.totalBytes = json.optLong("size")
+                session.recvStartedAt = SystemClock.elapsedRealtime()
+            }
+
+            "duplex_switch" -> {
+                // 对端推完第一程 → 本端开始推第二程
+                if (!session.isOfferer) pushChunkBurst(session)
+            }
+
+            "duplex_done" -> {
+                // 对端推完第二程 → 本端（offerer）全部结束
+                if (session.isOfferer) {
+                    session.peerPushDone = true
+                    complete(session)
+                }
+            }
+        }
+    }
+
+    /**
+     * 推送一程数据（duplex 时序，与桌面端一致）：
+     *  - offerer：推完发 `duplex_switch`，然后等对端回 `duplex_done` 才结束；
+     *  - answerer：收到 `duplex_switch` 后推第二程，推完发 `duplex_done` 并结束。
+     * 数据源：若 [Session.readChunk] 存在则用之（真实文件），否则用随机数据（测速）。
+     */
+    private fun pushChunkBurst(session: Session) {
+        val total = session.totalBytes
+        if (total <= 0L) return
+        session.pushed = 0L
+        session.pushStartedAt = SystemClock.elapsedRealtime()
+
         scope.launch {
-            val totalChunks = ((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt()
+            val totalChunks = ((total + session.chunkSize - 1) / session.chunkSize).toInt()
             val meta = JSONObject()
                 .put("t", "meta")
                 .put("size", total)
                 .put("totalChunks", totalChunks)
-                .put("chunkSize", CHUNK_SIZE)
-            sendText(meta.toString())
+                .put("chunkSize", session.chunkSize)
+            sendText(session, meta.toString())
 
+            val reader = session.readChunk
             for (i in 0 until totalChunks) {
+                val start = i * session.chunkSize
+                val len = minOf(session.chunkSize, (total - start).toInt()).coerceAtLeast(1)
                 val data = try {
-                    reader(i)
+                    reader?.invoke(i) ?: Random.nextBytes(ByteArray(len))
                 } catch (e: Exception) {
-                    finish("读取分片失败：${e.message}")
+                    fail(session, "读取数据失败：${e.message}")
                     return@launch
                 }
-                waitForBuffer()
+                waitForBuffer(session)
                 val frame = ByteBuffer.allocate(4 + data.size).order(ByteOrder.BIG_ENDIAN)
                 frame.putInt(i)
                 frame.put(data)
                 frame.flip()
-                val ok = dc?.send(DataChannel.Buffer(frame, true)) ?: false
+                val ok = session.dc?.send(DataChannel.Buffer(frame, true)) ?: false
                 if (!ok) {
-                    finish("发送失败（连接已断开）")
+                    fail(session, "发送失败（连接已断开）")
                     return@launch
                 }
-                transferred += data.size
-                updateProgress()
+                session.pushed += data.size
+                onProgressTick(session)
             }
-            finish(
-                "P2P 发送完成：${transferred / 1024} KB · " +
-                    "${speedMbps()} Mbps · ${peerId.take(8)}",
-            )
+            session.pushDone = true
+            if (session.isOfferer) {
+                sendText(session, JSONObject().put("t", "duplex_switch").toString())
+                // 等对端推完后回 duplex_done（见 handleControl）
+            } else {
+                sendText(session, JSONObject().put("t", "duplex_done").toString())
+                complete(session)
+            }
         }
     }
 
-    private suspend fun waitForBuffer() {
-        while ((dc?.bufferedAmount() ?: 0L) > BACKPRESSURE_BYTES) {
+    private suspend fun waitForBuffer(session: Session) {
+        while ((session.dc?.bufferedAmount() ?: 0L) > BACKPRESSURE_BYTES) {
             delay(20)
         }
     }
 
-    private fun sendText(text: String) {
-        val buf = ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8))
-        dc?.send(DataChannel.Buffer(buf, false))
+    private fun sendText(session: Session, text: String) {
+        runCatching {
+            session.dc?.send(DataChannel.Buffer(ByteBuffer.wrap(text.toByteArray()), false))
+        }
     }
 
-    private fun updateProgress() {
-        val elapsed = SystemClock.elapsedRealtime() - startedAt
-        val speed = if (elapsed > 0) transferred * 1000 / elapsed else 0
+    private fun onProgressTick(session: Session) {
+        val elapsed = SystemClock.elapsedRealtime() - session.recvStartedAt
+        val speed = if (elapsed > 0) session.received * 1000 / elapsed else 0
         _progress.value = _progress.value.copy(
-            transferredBytes = transferred,
+            transferredBytes = maxOf(session.pushed, session.received),
+            totalBytes = session.totalBytes,
             speedBps = speed,
+            peerId = session.peerId,
         )
+        session.onProgress?.invoke(session.received, session.totalBytes)
     }
 
-    private fun speedMbps(): String {
-        val bps = if (speedBpsValue() > 0) speedBpsValue() else 0
-        return "%.1f".format(bps / 1024.0 / 1024.0 * 8)
+    private fun complete(session: Session) {
+        if (session.finished) return
+        session.finished = true
+        val elapsed = (SystemClock.elapsedRealtime() - session.pushStartedAt).coerceAtLeast(1)
+        val speed = session.pushed * 1000 / elapsed
+        val result = P2PResult(
+            ok = true,
+            ms = elapsed,
+            speedBps = speed,
+            bytes = session.pushed,
+        )
+        session.onResult?.invoke(result)
+        closeSession(session.key)
+        _progress.value = P2PProgress()
     }
 
-    private fun speedBpsValue(): Long = _progress.value.speedBps
-
-    private fun finish(note: String) {
-        updateProgress()
-        _progress.value = _progress.value.copy(active = false, connected = false)
-        _message.value = note
-        close()
+    private fun fail(session: Session, reason: String) {
+        if (session.finished) return
+        session.finished = true
+        session.onResult?.invoke(P2PResult(false, 0, 0, 0, reason))
+        closeSession(session.key)
+        _progress.value = P2PProgress()
     }
 
-    private fun fail(reason: String) {
-        _progress.value = _progress.value.copy(active = false, connected = false)
-        _message.value = reason
-        close()
-    }
-
-    // ---------------- WebRTC 回调 ----------------
-
-    private val sdpObserver = object : SdpObserver {
+    private fun sdpObserver(session: Session) = object : SdpObserver {
         override fun onCreateSuccess(desc: SessionDescription?) {
             desc ?: return
-            pc?.setLocalDescription(this, desc)
+            session.pc?.setLocalDescription(this, desc)
         }
 
         override fun onSetSuccess() {
-            if (!isOfferer) {
-                // answerer：remote=offer 已设置 → 生成 answer
-                if (pc?.localDescription == null) {
-                    pc?.createAnswer(this, MediaConstraints())
+            if (!session.localDescriptionSet) {
+                session.localDescriptionSet = true
+                if (session.isOfferer) {
+                    val sdp = session.pc?.localDescription?.description ?: return
+                    emit(session, "peer:offer", JSONObject().put("sdp", desc("offer", sdp)))
+                } else if (!session.answerSent) {
+                    session.answerSent = true
+                    session.pc?.createAnswer(this, MediaConstraints())
                 }
-            } else {
-                // offerer：local=offer 已设置 → 发送 offer 信令
-                val sdp = pc?.localDescription?.description ?: return
-                sendSignal?.invoke(
-                    "peer:offer",
-                    peerId,
-                    JSONObject().put("sdp", JSONObject().put("type", "offer").put("sdp", sdp)),
-                )
+                return
+            }
+            // answerer 的 answer 已 setLocal → 发 peer:answer
+            if (!session.isOfferer && session.answerSent) {
+                val sdp = session.pc?.localDescription?.description ?: return
+                emit(session, "peer:answer", JSONObject().put("sdp", desc("answer", sdp)))
             }
         }
 
-        override fun onCreateFailure(error: String?) = fail("创建 SDP 失败：$error")
-
-        override fun onSetFailure(error: String?) = fail("设置 SDP 失败：$error")
+        override fun onCreateFailure(error: String?) = fail(session, "创建 SDP 失败：$error")
+        override fun onSetFailure(error: String?) = fail(session, "设置 SDP 失败：$error")
     }
 
-    private val observer = object : PeerConnection.Observer {
+    private fun desc(type: String, sdp: String) = JSONObject().put("type", type).put("sdp", sdp)
+
+    private fun emit(session: Session, type: String, payload: JSONObject) {
+        payload.put("tag", session.tag)
+        sendSignal?.invoke(type, session.peerId, payload)
+    }
+
+    private fun observer(session: Session) = object : PeerConnection.Observer {
         override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
         override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
@@ -372,9 +519,9 @@ object P2PTransfer {
 
         override fun onIceCandidate(candidate: IceCandidate?) {
             candidate ?: return
-            sendSignal?.invoke(
+            emit(
+                session,
                 "peer:ice",
-                peerId,
                 JSONObject().put(
                     "candidate",
                     JSONObject()
@@ -391,7 +538,9 @@ object P2PTransfer {
                 PeerConnection.IceConnectionState.COMPLETED,
                 -> _progress.value = _progress.value.copy(connected = true)
 
-                PeerConnection.IceConnectionState.FAILED -> fail("P2P 打洞失败（对称 NAT？）可回退服务器中转")
+                PeerConnection.IceConnectionState.FAILED ->
+                    fail(session, "打洞失败（对称 NAT？无 TURN 时需回退中转）")
+
                 else -> Unit
             }
         }
@@ -403,9 +552,8 @@ object P2PTransfer {
         }
 
         override fun onDataChannel(channel: DataChannel?) {
-            // answerer 侧拿到对端创建的通道（也是接收数据的地方）
             channel ?: return
-            wireChannel(channel)
+            wireChannel(session, channel)
         }
     }
 }

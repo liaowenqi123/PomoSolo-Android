@@ -631,6 +631,13 @@ object StudyRoomStore {
                 P2PTransfer.onSignal(msg)
             }
 
+            "p2p:online",
+            "p2p:test_request",
+            "p2p:test_result",
+            "p2p:reverse_test_request",
+            "p2p:bidir_test_request",
+            -> P2PTestStore.onWsMessage(msg)
+
             "error" -> {
                 val text = msg.optString("error")
                 if (text.isNotBlank()) fail(text)
@@ -657,9 +664,14 @@ object StudyRoomStore {
         _state.value = _state.value.copy(error = message)
     }
 
-    /** 供外部（同步听歌 / 传歌）使用的请求发送入口。 */
+    /** 供外部（同步听歌 / 传歌 / P2P）使用的请求发送入口。 */
     fun sendCustom(type: String, payload: JSONObject, withId: Boolean = false) {
         send(type, payload, withId)
+    }
+
+    /** 请求-响应式发送（等服务器回同名 id，8s 超时），如 `p2p:online`。 */
+    fun request(type: String, payload: JSONObject, onResult: (JSONObject?, String?) -> Unit) {
+        send(type, payload, withId = true, onResult = onResult)
     }
 
     fun markSynced(songId: String, playing: Boolean, positionMs: Long) {

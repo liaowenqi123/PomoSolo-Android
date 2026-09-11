@@ -282,6 +282,7 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
 | `data/P2PTransfer.kt` | WebRTC 传输层：`PeerConnection` + DataChannel(`"p2p"`, ordered)、4×STUN、`meta` 控制消息、128KB 分片、4 字节大端序号、`bufferedAmount` 背压、ICE 候选缓冲（remoteDescription 前先缓存）、连接/失败回调 |
 | `data/StudyRoomStore.kt` | 信令桥接：注入 `sendSignal`（走现有 WS 发 `peer:offer/answer/ice`，带 `to_user_id`）+ 把收到的 `peer:*` 转给 `P2PTransfer.onSignal` |
 | `ui/StudyRoomScreen.kt` | 房内**点其他成员 → 发起 P2P 直连测速**（随机数据），成员区下方实时显示 `已直连/打洞中 · 已传 KB · Mbps` |
+| `data/P2PTestStore.kt` + `ui/P2PTestScreen.kt` | **与桌面端互通的打洞测试工具**（入口：设置 → 调试 → P2P 打洞测试）：`p2p:online` 拉在线用户；点用户依次跑 A（本机 offerer）/ B（反向）两轮双向测速并展示 ↑/↓ Mbps；收到桌面端的 `p2p:test_request` / `reverse_test_request` / `bidir_test_request` 会**自动挂起应答**并把 `p2p:test_result` 回传（字段名与服务端白名单一致） |
 
 依赖：`io.github.webrtc-sdk:android:125.6422.07`，`abiFilters = {arm64-v8a, x86_64}`
 （保留 x86_64 以便在模拟器/MuMu 上自测）。**实测 APK：32.13MB → 55.35MB（+23MB，两个 ABI）**；

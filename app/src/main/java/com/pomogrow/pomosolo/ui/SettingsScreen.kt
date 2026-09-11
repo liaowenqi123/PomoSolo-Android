@@ -65,10 +65,15 @@ fun SettingsScreen() {
     val aiConfig by AiPickStore.config.collectAsState()
     val authState by AuthStore.state.collectAsState()
     var showAuth by remember { mutableStateOf(false) }
+    var showP2P by remember { mutableStateOf(false) }
 
-    // 账号页：设置内的二级页面
+    // 二级页面：账号 / P2P 打洞测试
     if (showAuth) {
         AuthScreen(onBack = { showAuth = false })
+        return
+    }
+    if (showP2P) {
+        P2PTestScreen(onBack = { showP2P = false })
         return
     }
 
@@ -242,6 +247,27 @@ fun SettingsScreen() {
                 TextButton(onClick = { StatsStore.resetToday() }) {
                     Text("清空", color = PomoPrimary)
                 }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Section("调试") {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { showP2P = true }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("P2P 打洞测试", color = PomoText, fontSize = 14.sp)
+                    Text(
+                        "与桌面端互测 WebRTC 直连（双方需登录并保持在线）",
+                        color = PomoTextDim,
+                        fontSize = 11.sp,
+                    )
+                }
+                Text("›", color = PomoTextDim, fontSize = 20.sp)
             }
         }
 
