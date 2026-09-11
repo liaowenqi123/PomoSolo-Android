@@ -57,8 +57,12 @@ fun P2PTestScreen(onBack: () -> Unit) {
     val progress by P2PTransfer.progress.collectAsState()
 
     LaunchedEffect(Unit) {
+        // 首次进入时 WS 可能还没握手完成，直接发请求会失败（实测踩过），故轮询等待就绪
         if (!StudyRoomStore.state.value.connected) StudyRoomStore.connect()
-        delay(600)
+        repeat(24) {
+            if (StudyRoomStore.state.value.connected) return@repeat
+            delay(300)
+        }
         P2PTestStore.refreshUsers()
     }
     LaunchedEffect(message) {
