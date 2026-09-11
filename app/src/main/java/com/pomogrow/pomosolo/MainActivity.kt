@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.pomogrow.pomosolo.data.AiPickStore
+import com.pomogrow.pomosolo.data.AuthStore
 import com.pomogrow.pomosolo.data.MusicStore
 import com.pomogrow.pomosolo.data.PomodoroTimer
 import com.pomogrow.pomosolo.data.SettingsStore
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
         SettingsStore.init(applicationContext)
         StatsStore.init(applicationContext)
         AiPickStore.init(applicationContext)
+        AuthStore.init(applicationContext)
         MusicStore.init(applicationContext)
         PomodoroTimer.init(applicationContext)
         PlayerController.init(applicationContext)

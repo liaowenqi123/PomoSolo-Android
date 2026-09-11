@@ -23,8 +23,8 @@ PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自
 | MusicPlayer（曲库 / 本地管理 / 播放列表 / 播放控制） | **音乐** tab（曲库 · 热榜 · 本地）+ 全局播放条 | ✅ |
 | **音乐热榜 + 爬虫下载**（Charts.vue / DownloadDialog / downloader.rs） | **热榜** tab（原生爬虫 + 音频提取） | ✅ |
 | SettingsPanel（计时、提醒、显示等） | **设置** tab | ✅（安卓适用项） |
-| 登录 / 账号面板 | — | ⏳ m4 |
-| 自习室 StudyRoom（成员 / 同步听歌 / P2P 传歌） | — | ⏳ m4 |
+| 登录 / 账号面板（AuthPanel.vue） | **设置 → 账号**（登录 / 注册 / 会话 / admin Key 下发） | ✅ |
+| 自习室 StudyRoom（成员 / 同步听歌 / P2P 传歌） | — | ⏳ 待办 |
 | 教程页 | — | ⏳ 待办 |
 | 桌面端专属（AI 助手 / 菜园子 / 前台检测 / 统计图表 / 太空旅行） | 依赖桌面环境 | 暂不做 |
 
@@ -37,7 +37,8 @@ PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自
 | **m2.1 · 行为对齐修复** | 模式切换不打断计时；「运行中禁止暂停/重置」回归专注模式专有；单次模式无跳过按钮；播放栏独立占位；文案入固定高度容器；容器渐变对齐 PWA 色板 | ✅ 完成 |
 | **m2.2 · 热榜与番茄图标** | 音乐热榜（网易云 / QQ）原生爬取；单曲「爬虫 + 音频提取」下载器（B站搜索 → **DeepSeek LLM 选片** → DASH 音频流 → 落盘）；App 图标替换为番茄 | ✅ 完成 |
 | **m3 · 播放与计时体验** | 后台播放 + 系统通知、锁屏媒体控制(MediaSession)、下载续传/取消、计时前台服务 | 🚧 部分 |
-| **m4 · 云端** | 账号体系（REST）、自习室 WS、P2P 传歌 | ⏳ 规划 |
+| **m4 · 账号体系** | REST 对接（注册 / 登录 / 刷新 / 登出 / 会话）、Token 持久化 + 401 自动刷新重试、连接测试、admin 的 DeepSeek Key 下发 | ✅ 完成 |
+| **m5 · 自习室与 P2P** | 自习室 WebSocket（成员 / 同步听歌）、P2P 传歌 | ⏳ 规划 |
 
 ### 与 PWA 部门的关系（分工边界）
 
@@ -70,7 +71,8 @@ pomodoro/
 │   │   ├── ChartsStore.kt         # 音乐热榜：网易云 / QQ 榜单直连爬取
 │   │   ├── BiliClient.kt          # 音源客户端：B站搜索 / DASH 音频流提取 / 流式下载（CookieJar + 退避重试）
 │   │   ├── DeepSeekClient.kt      # AI 选片：对齐桌面端 deepseek_select（提示词/温度/解析完全一致）
-│   │   ├── AiPickStore.kt         # AI 选片配置（开关 / API Key / 模型），本机持久化
+│   │   ├── AiPickStore.kt         # AI 选片配置（开关 / API Key / 模型 / 来源），本机持久化
+│   │   ├── AuthStore.kt           # 账号体系：注册/登录/刷新/登出/会话 + admin Key 下发
 │   │   ├── SongDownloader.kt      # 单曲下载器：搜索 → AI 选片 → 提取 → 落盘 → 登记本地库（串行队列）
 │   │   ├── PomodoroSettings.kt    # 设置（时长、计划轮数、自动开始、提醒、常亮…）
 │   │   ├── StatsStore.kt          # 统计（今日完成 / 累计专注分钟，跨天自动重置）
@@ -83,7 +85,8 @@ pomodoro/
 │       ├── FocusScreen.kt         # 专注页（番茄钟主计时页）
 │       ├── MusicScreen.kt         # 音乐页（曲库 / 热榜 / 本地 三 tab）
 │       ├── ChartsTab.kt           # 热榜页（来源切换 + 榜单 + 下载/进度/重试）
-│       ├── SettingsScreen.kt      # 设置页
+│       ├── SettingsScreen.kt      # 设置页（含账号入口）
+│       ├── AuthScreen.kt          # 账号页（登录 / 注册 / 已登录信息 / 连接测试）
 │       └── PlayerUi.kt            # 迷你播放条 + 展开播放面板
 ├── app/src/main/res/mipmap-*/     # 番茄图标（含自适应图标 mipmap-anydpi-v26）
 ├── app/src/main/assets/tracks/    # 3 首内置 mp3（内容种子，首启拷入私有目录）
@@ -162,6 +165,35 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
 **音乐 · AI 选片**（AI 选片开关、DeepSeek API Key、测试连接）、
 显示（屏幕常亮、正向计时阈值）、数据（今日/累计、清空今日）、关于。
 
+### 账号体系（m4，对接自建服务器）
+
+入口：**设置 → 账号**（登录 / 注册 Tab；已登录显示用户信息与会话操作）。
+
+接口（`https://api.pomogrow.top/api/v1`，对齐 `server-planning/EXTERNAL-INTERFACES.md` 与桌面端 `cloud_auth.rs`）：
+
+| 端点 | 说明 |
+|------|------|
+| `POST /auth/register` | `{username, password}` → 201 + `{user, access_token, refresh_token}`；409 用户名/邮箱已注册 |
+| `POST /auth/login` | `{username, password}` → 200 + 同上；失败返回 `{error}` |
+| `POST /auth/refresh` | `{refresh_token}` → 新 access + **滚动刷新**的 refresh |
+| `POST /auth/logout` | 带 `refresh_token`，204；失败也照样清空本地会话 |
+| `GET /auth/session` | 校验会话，返回 `{user}` |
+| `GET /config/deepseek-key` | 仅 admin：下发 AI 选片用的 Key |
+| `GET /api/status`（+ `/api/v1/health` 兜底） | 连接测试（桌面端 / PWA 同款） |
+
+工程要点（对齐 PWA `http.ts`）：
+- `Authorization: Bearer <access_token>`；access 15 分钟 / refresh 30 天；
+- **401 自动刷新一次并重试原请求**，刷新失败才登出（网络抖动不登出）；
+- 错误统一读 `error` 字段（兼容 `detail`）；
+- 本地校验与桌面端一致：用户名 ≥2、密码 ≥6、注册两次密码一致；
+- Token 与用户信息存 SharedPreferences（应用私有目录）；设置页顶部显示账号摘要。
+
+**与 AI 选片的联动**：admin 账号登录后自动调用 `/config/deepseek-key`，把服务器下发的 Key
+写入 AI 选片配置（设置页「Key 来源」会显示"服务器下发"），对齐桌面端 `sync_deepseek_key`。
+
+> 实测（2026-09-11）：`GET /api/status` → 200（服务 v1.0.0）；无 token 访问 `/auth/session` → 401
+> `{"error":"未登录"}`；空参数登录 → 400 `{"error":"用户名和密码不能为空"}` —— 与客户端错误处理一致。
+
 ## 行为对齐说明（PWA / 桌面端 → 安卓）
 
 | 行为 | 原始实现 | 安卓实现 |
@@ -188,7 +220,9 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
 - **计时后台**：切后台回到前台时间准确（时间戳基准），但无系统通知/悬浮计时（m3 前台服务）；
 - **计划模式形态差异**：PWA 的计划是「可自由增删的任务列表」，安卓当前是「N 轮 × 固定时长」简化版；
 - 服务器曲库目前仅 3 首内置曲；曲库扩展由服务器侧决定；
-- 账号 / 自习室 / P2P 传歌 / 教程页在 m4。
+- **账号体系已就绪**（m4）；自习室 WS / P2P 传歌（m5）、教程页仍未做；
+- Token 以明文存于应用私有的 SharedPreferences（Android 沙箱隔离）；如需更强保护可换
+  EncryptedSharedPreferences + Keystore。
 
 ## 协作规范（沿用主仓库 TEAM_GUIDE）
 

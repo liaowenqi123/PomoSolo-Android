@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pomogrow.pomosolo.data.AiPickStore
+import com.pomogrow.pomosolo.data.AuthStore
 import com.pomogrow.pomosolo.data.DeepSeekClient
 import com.pomogrow.pomosolo.data.SettingsStore
 import com.pomogrow.pomosolo.data.StatsStore
@@ -61,6 +62,14 @@ fun SettingsScreen() {
     val todayCount by StatsStore.todayCount.collectAsState()
     val totalMinutes by StatsStore.totalMinutes.collectAsState()
     val aiConfig by AiPickStore.config.collectAsState()
+    val authState by AuthStore.state.collectAsState()
+    var showAuth by remember { mutableStateOf(false) }
+
+    // 账号页：设置内的二级页面
+    if (showAuth) {
+        AuthScreen(onBack = { showAuth = false })
+        return
+    }
 
     Column(
         Modifier
@@ -71,7 +80,44 @@ fun SettingsScreen() {
     ) {
         Spacer(Modifier.height(16.dp))
         Text("设置", color = PomoText, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("计时 · 提醒 · 数据", color = PomoTextDim, fontSize = 12.sp)
+        Text("账号 · 计时 · 提醒 · 数据", color = PomoTextDim, fontSize = 12.sp)
+
+        Spacer(Modifier.height(14.dp))
+        // 账号入口（对齐桌面端 AuthPanel 的入口）
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(PomoSurface)
+                .clickable { showAuth = true }
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (authState.loggedIn) PomoPrimary else PomoSurfaceHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (authState.loggedIn) {
+                        authState.user?.username?.take(1)?.uppercase().orEmpty()
+                    } else {
+                        "👤"
+                    },
+                    color = if (authState.loggedIn) Color.White else PomoTextDim,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("账号", color = PomoText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(authSummary(authState, aiConfig.fromServer), color = PomoTextDim, fontSize = 12.sp)
+            }
+            Text("›", color = PomoTextDim, fontSize = 20.sp)
+        }
 
         Spacer(Modifier.height(18.dp))
         Section("计时") {
@@ -152,7 +198,14 @@ fun SettingsScreen() {
                 },
             )
             DividerLine()
-            InfoRow("Key 来源", "本机填写 / 服务器下发（待账号体系）")
+            InfoRow(
+                label = "Key 来源",
+                value = if (aiConfig.fromServer) {
+                    "服务器下发（admin 账号）"
+                } else {
+                    "本机填写 / 登录 admin 可同步"
+                },
+            )
         }
 
         Spacer(Modifier.height(16.dp))
