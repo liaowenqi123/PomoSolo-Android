@@ -223,9 +223,53 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
   广播 `music:sync_state`（song_id 用曲目标题）；听众端收到后**若本地已有该曲目**则跟随播放并
   对齐进度；未下载的曲目会提示（等 P2P 传歌补齐）。
 
-**P2P 传歌**：桌面端走 WebRTC DataChannel 直连（`peer:offer/answer/ice/bye` 信令 + `music:request_song`
-/`music:offer_song` 分片），Android 直连需要 WebRTC native 库（数 MB，`.so`）。
-当前策略是**先走服务器中转降级路径**（纯 OkHttp + Kotlin，无需 WebRTC），WebRTC 直连列入 m5.1。
+### P2P 传歌与 m5.1（WebRTC 调研）
+
+**为什么 PWA / 桌面端能"零依赖"走 WebRTC？**
+因为它们的运行环境本身就带浏览器引擎：PWA 跑在浏览器里，桌面端 Tauri 跑在 WebView 里
+（Windows = WebView2 / Chromium，Linux = WebKitGTK），而 **WebRTC（libwebrtc）是浏览器内核内置的能力**，
+通过 JS API `RTCPeerConnection` / `RTCDataChannel` 暴露。所以 `src/p2p.ts` 只是调用宿主能力，
+源码注释也写着「前端（WebView2/Chromium）原生支持 RTCPeerConnection，零新增依赖」。
+**原生 Android（Kotlin + Compose，无 WebView）没有浏览器内核 → 没有内置 WebRTC**，
+必须自己把 libwebrtc（native `.so` + JNI 绑定）打进 APK —— 这就是体积代价的来源。
+
+**实测（2026-09-11，已实际加依赖构建验证）**：
+
+| 配置 | APK | 增量 |
+|------|-----|------|
+| 当前版本（无 WebRTC） | 32.40 MB | — |
+| + `io.github.webrtc-sdk:android:125.6422.07`（4 个 ABI） | 75.08 MB | +42.7 MB |
+| + 同上 + `ndk.abiFilters = {arm64-v8a, armeabi-v7a}` | 49.42 MB | **+17.0 MB** |
+
+- 依赖可从 Maven Central 正常拉取（AAR 41.7 MB，BSD 许可，2025-03 发布，仍在维护）；
+- 用 `abiFilters` 去掉 x86/x86_64（只有模拟器需要）可省 25.7 MB；
+- 若改用 AAB 分发，单设备实际下载约 +8.5 MB。
+- **本仓库当前未引入该依赖**（代码尚未使用，避免白白增大包体）；`app/build.gradle.kts` 里留了说明，
+  实现时一行加回即可。
+
+**Android 复刻要点**（`src/p2p.ts` → Kotlin 映射）：WebRTC native 库提供 `PeerConnection` /
+`DataChannel` / `IceCandidate` / `SessionDescription` 等类，与 JS API 语义一一对应；需要复刻的协议细节：
+
+| 项 | 原实现 |
+|----|--------|
+| ICE 服务器 | 4 个 STUN 并行（cloudflare / miwifi / bilibili / google），**无 TURN** |
+| DataChannel | label `"p2p"`，`ordered: true`（可靠有序） |
+| 分片 | 128 KB/片；数据帧 = **4 字节大端 chunk_index + payload** |
+| 控制消息 | JSON：`meta{size,totalChunks,chunkSize}`、`hello{v:2}` / `hello-ack{compress:1}` 压缩协商 |
+| 背压 | `bufferedAmount` 超阈值即暂停发送，等 `bufferedamountlow` 再继续（否则 `send` 抛错、发送端静默死亡） |
+| 信令 | 复用现有 WS：`peer:offer/answer/ice/bye`（带 `tag` 支持并发连接），服务端只做定向转发 |
+| 失败回退 | 打洞超时（音乐 15s）→ 自动回退服务器中转；反向打洞 `p2p:reverse_transfer_request` 兜底 |
+
+**方案对比**：
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| A. 引入 WebRTC native 库（推荐） | 纯原生、能力完整、与桌面端协议对齐 | APK +17 MB（AAB 约 +8.5 MB） |
+| B. 隐藏 WebView 跑现成 `p2p.ts` | 复用已成熟 JS 逻辑 | 违背 v1「去 WebView」定调；后台 WebView 生命周期/省电/跨进程传参开销 |
+| C. 保持服务器中转（现状） | 零依赖、已验证 | 走服务器带宽、无 P2P 提速 |
+
+**推进前提**：① 手机上 WS 信令可用（见上方探测记录，本机握手超时待确认）；
+② 两台真机互测打洞成功率（对称 NAT 下无 TURN 可能失败，此时自动回退中转）。
 
 > 探测记录（2026-09-11，本机）：REST 全部可用（`/api/status` 200、`/auth/session` 401 等）；
 > 但 `wss://api.pomogrow.top/ws` 在本机连续两次握手 12s 超时（`state=Connecting`）。

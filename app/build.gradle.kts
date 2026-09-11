@@ -62,4 +62,10 @@ dependencies {
 
     // 网络与下载：OkHttp（流式 + 进度）
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // 说明：P2P 传歌（m5.1）所需的 WebRTC native 库已实测可用，但尚未接入代码，
+    // 故暂不引入（避免 APK 白白增大 ~17MB）。实现时加回即可：
+    //   implementation("io.github.webrtc-sdk:android:125.6422.07")   // AAR 41.7MB，含 4 个 ABI
+    //   并在 defaultConfig 里加 ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+    // 实测 APK：32.40MB → 75.08MB（4 ABI）/ 49.42MB（仅手机 ABI）。详见 README「m5.1」。
 }
