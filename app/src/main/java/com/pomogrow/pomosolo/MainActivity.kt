@@ -3,6 +3,7 @@ package com.pomogrow.pomosolo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import com.pomogrow.pomosolo.data.AiPickStore
 import com.pomogrow.pomosolo.data.AuthStore
 import com.pomogrow.pomosolo.data.MusicStore
@@ -21,6 +22,8 @@ import com.pomogrow.pomosolo.ui.theme.PomoTheme
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 边到边：内容延伸到状态栏下方（渐变/背景铺满），各页面自行处理状态栏内边距
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         SettingsStore.init(applicationContext)
         StatsStore.init(applicationContext)

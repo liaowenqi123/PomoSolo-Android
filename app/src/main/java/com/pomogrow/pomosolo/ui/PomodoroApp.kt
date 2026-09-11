@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -139,6 +140,9 @@ fun PomodoroApp() {
 
     Scaffold(
         containerColor = PomoBg,
+        // 边到边：Scaffold 不再统一加系统栏内边距，由各页面自己处理
+        // （这样专注页的渐变背景能铺满状态栏区域，而文字仍避开状态栏）
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbar) },
         // 迷你播放器与底部导航同处 bottomBar：Scaffold 会为整块预留高度，
         // 页面内容不会被播放栏遮挡（PWA 也是给音乐播放器预留出空间）。
@@ -209,7 +213,8 @@ private fun RowScope.BottomItem(
         colors = NavigationBarItemDefaults.colors(
             selectedIconColor = PomoPrimary,
             selectedTextColor = PomoPrimary,
-            indicatorColor = PomoSurface,
+            // 指示器不能与导航栏底色相同，否则选中态看不出来
+            indicatorColor = PomoPrimary.copy(alpha = 0.20f),
             unselectedIconColor = PomoTextDim,
             unselectedTextColor = PomoTextDim,
         ),

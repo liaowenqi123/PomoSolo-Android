@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -75,6 +76,7 @@ fun SettingsScreen() {
         Modifier
             .fillMaxSize()
             .background(PomoBg)
+            .statusBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp),
     ) {
@@ -283,7 +285,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 
 @Composable
 private fun DividerLine() {
-    HorizontalDivider(color = PomoSurfaceHigh, thickness = 1.dp)
+    HorizontalDivider(color = Color.White.copy(alpha = 0.08f), thickness = 1.dp)
 }
 
 @Composable

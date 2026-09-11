@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -89,7 +90,7 @@ fun StudyRoomScreen() {
         return
     }
 
-    Column(Modifier.fillMaxSize().background(PomoBg)) {
+    Column(Modifier.fillMaxSize().background(PomoBg).statusBarsPadding()) {
         // 顶部栏
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),

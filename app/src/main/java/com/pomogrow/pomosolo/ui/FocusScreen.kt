@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,10 +38,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -89,11 +92,12 @@ fun FocusScreen() {
         Modifier
             .fillMaxSize()
             .background(timerBackground(state))
+            .statusBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(12.dp))
         Text("🍅 番茄钟", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
 
         Spacer(Modifier.height(14.dp))
@@ -119,18 +123,25 @@ fun FocusScreen() {
             }
         }
 
-        Spacer(Modifier.height(10.dp))
-        TimerRing(progress = state.progress, modifier = Modifier.size(240.dp)) {
+        Spacer(Modifier.height(8.dp))
+        TimerRing(progress = state.progress, modifier = Modifier.size(236.dp)) {
             Text(
                 fmtClock(state.displayMs),
                 color = Color.White,
-                fontSize = 48.sp,
+                fontSize = 50.sp,
                 fontWeight = FontWeight.Bold,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = Color.Black.copy(alpha = 0.30f),
+                        offset = Offset(0f, 4f),
+                        blurRadius = 20f,
+                    ),
+                ),
             )
         }
 
         // 专注模式开关：固定高度（正向模式不显示时也占位）
-        Box(Modifier.fillMaxWidth().height(58.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().height(50.dp), contentAlignment = Alignment.Center) {
             if (state.appMode != AppMode.STOPWATCH) {
                 FocusModeSwitch(
                     active = state.focusMode,
@@ -186,12 +197,12 @@ fun FocusScreen() {
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatCard("今日完成", "$todayCount 个", Modifier.weight(1f))
             StatCard("累计专注", "$totalMinutes 分钟", Modifier.weight(1f))
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
     }
 }
 
@@ -277,7 +288,7 @@ private fun RowScope.PillTab(
     Box(
         modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(if (active) Color.White.copy(alpha = 0.22f) else Color.Transparent)
+            .background(if (active) Color.White.copy(alpha = 0.94f) else Color.Transparent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -288,9 +299,9 @@ private fun RowScope.PillTab(
     ) {
         Text(
             label,
-            color = if (active) Color.White else Color.White.copy(alpha = 0.6f),
+            color = if (active) Color(0xFFB53248) else Color.White.copy(alpha = 0.7f),
             fontSize = 13.sp,
-            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
         )
     }
 }
@@ -304,7 +315,7 @@ private fun FocusModeSwitch(active: Boolean, enabled: Boolean, onToggle: () -> U
     Row(
         Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(Color.White.copy(alpha = 0.10f))
+            .background(Color.White.copy(alpha = 0.14f))
             .alpha(if (enabled) 1f else 0.6f)
             .clickable(
                 enabled = enabled,
@@ -346,27 +357,27 @@ private fun FocusModeSwitch(active: Boolean, enabled: Boolean, onToggle: () -> U
     }
 }
 
-/** 主按钮（PWA .btn-start / .btn-reset：半透明白胶囊）。 */
+/** 主按钮（PWA .btn-start / .btn-reset）：主按钮白底深字、次按钮描边，宽度统一。 */
 @Composable
 private fun PomoButton(text: String, primary: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .width(if (primary) 90.dp else 70.dp)
-            .height(36.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .width(104.dp)
+            .height(40.dp)
+            .clip(RoundedCornerShape(20.dp))
             .background(
                 if (primary) {
-                    Brush.linearGradient(
-                        listOf(Color.White.copy(alpha = 0.30f), Color.White.copy(alpha = 0.20f)),
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.96f), Color.White.copy(alpha = 0.86f)),
                     )
                 } else {
-                    SolidColor(Color.White.copy(alpha = 0.15f))
+                    SolidColor(Color.White.copy(alpha = 0.12f))
                 },
             )
             .border(
                 width = 1.dp,
-                color = Color.White.copy(alpha = if (primary) 0f else 0.3f),
-                shape = RoundedCornerShape(18.dp),
+                color = Color.White.copy(alpha = if (primary) 0f else 0.38f),
+                shape = RoundedCornerShape(20.dp),
             )
             .alpha(if (enabled) 1f else 0.5f)
             .clickable(
@@ -377,7 +388,12 @@ private fun PomoButton(text: String, primary: Boolean, enabled: Boolean, onClick
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            text,
+            color = if (primary) Color(0xFFB53248) else Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -394,7 +410,7 @@ private fun TimerRing(
             val d = size.minDimension - stroke
             val topLeft = Offset((size.width - d) / 2f, (size.height - d) / 2f)
             drawArc(
-                color = Color.White.copy(alpha = 0.12f),
+                color = Color.White.copy(alpha = 0.18f),
                 startAngle = -90f,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -404,7 +420,7 @@ private fun TimerRing(
             )
             if (progress > 0.001f) {
                 drawArc(
-                    color = Color.White.copy(alpha = 0.85f),
+                    color = Color.White.copy(alpha = 0.92f),
                     startAngle = -90f,
                     sweepAngle = 360f * progress,
                     useCenter = false,
@@ -414,6 +430,18 @@ private fun TimerRing(
                 )
             }
         }
+        // 内圈（对齐 PWA `.timer-inner`：145deg 半透明白渐变 + 细边框 + 内阴影感）
+        Box(
+            Modifier
+                .fillMaxSize(0.82f)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color.White.copy(alpha = 0.14f), Color.White.copy(alpha = 0.05f)),
+                    ),
+                )
+                .border(2.dp, Color.White.copy(alpha = 0.20f), CircleShape),
+        )
         content()
     }
 }
@@ -422,14 +450,14 @@ private fun TimerRing(
 private fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
     Column(
         modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.12f))
-            .padding(vertical = 12.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.15f))
+            .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(value, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
-        Text(label, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+        Text(label, color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp)
     }
 }
 

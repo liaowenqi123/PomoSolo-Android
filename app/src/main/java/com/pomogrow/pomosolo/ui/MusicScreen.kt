@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -137,7 +138,7 @@ fun MusicPage() {
     }
 
     Box(Modifier.fillMaxSize().background(PomoBg)) {
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Header(
                 onlineCount = catalog.size,
                 localCount = local.size + imports.size,
@@ -251,9 +252,11 @@ private fun Header(
             }
         }
         Text(
-            "原生下载器：曲库落盘到应用私有空间（可一键下载全部），飞行模式也能听",
+            "原生下载器 · 落盘后离线可听 · 支持一键下载全部",
             color = PomoTextDim,
             fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
