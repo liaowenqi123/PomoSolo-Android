@@ -13,6 +13,12 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "1.0.0"
+
+        // WebRTC 只保留手机常用的 arm64-v8a 与 x86_64（模拟器/MuMu 自测用）；
+        // 去掉 x86 与 armeabi-v7a（32 位老设备）——2026 年可忽略。
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -63,9 +69,8 @@ dependencies {
     // 网络与下载：OkHttp（流式 + 进度）
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // 说明：P2P 传歌（m5.1）所需的 WebRTC native 库已实测可用，但尚未接入代码，
-    // 故暂不引入（避免 APK 白白增大 ~17MB）。实现时加回即可：
-    //   implementation("io.github.webrtc-sdk:android:125.6422.07")   // AAR 41.7MB，含 4 个 ABI
-    //   并在 defaultConfig 里加 ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-    // 实测 APK：32.40MB → 75.08MB（4 ABI）/ 49.42MB（仅手机 ABI）。详见 README「m5.1」。
+    // P2P 传歌（m5.1）：WebRTC native 库（libwebrtc 预编译 + Java 绑定，BSD，AAR 41.7MB）
+    // 桌面端/PWA 是"白嫖" WebView 内置的 WebRTC，原生 Android 无浏览器内核，只能自带。
+    // 实测 APK 增量：+17.0MB（仅 arm64-v8a + x86_64）；详见 README「P2P 传歌与 m5.1」。
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
 }

@@ -115,6 +115,14 @@ object StudyRoomStore {
     /** 自愈重进房间的节流时间戳。 */
     private var lastRejoinAt = 0L
 
+    init {
+        // P2P 信令桥接：P2PTransfer 通过现有 WS 发 peer:offer/answer/ice（服务端定向转发）
+        P2PTransfer.sendSignal = { type, toUserId, payload ->
+            payload.put("to_user_id", toUserId)
+            sendCustom(type, payload, withId = false)
+        }
+    }
+
     /** 收到的原始消息回调（供外部模块消费，例如同步听歌 / 传歌）。 */
     var onServerMessage: ((JSONObject) -> Unit)? = null
 
@@ -616,6 +624,11 @@ object StudyRoomStore {
                     chat = emptyList(),
                     error = "房间已被解散",
                 )
+            }
+
+            "peer:offer", "peer:answer", "peer:ice" -> {
+                // WebRTC 信令（服务端只做定向转发，附加 from_user_id）
+                P2PTransfer.onSignal(msg)
             }
 
             "error" -> {

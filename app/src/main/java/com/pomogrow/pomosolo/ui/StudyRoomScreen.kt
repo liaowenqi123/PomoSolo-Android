@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pomogrow.pomosolo.data.AuthStore
+import com.pomogrow.pomosolo.data.P2PTransfer
 import com.pomogrow.pomosolo.data.StudyRoomStore
 import com.pomogrow.pomosolo.data.StudyRoomState
 import com.pomogrow.pomosolo.ui.theme.PomoBg
@@ -60,6 +61,7 @@ import com.pomogrow.pomosolo.ui.theme.PomoSurface
 import com.pomogrow.pomosolo.ui.theme.PomoSurfaceHigh
 import com.pomogrow.pomosolo.ui.theme.PomoText
 import com.pomogrow.pomosolo.ui.theme.PomoTextDim
+import kotlinx.coroutines.delay
 
 /**
  * 自习室页（对齐桌面端 StudyRoom.vue）：房间列表 / 创建 / 加入 → 房内成员、聊天、同步听歌（DJ）。
@@ -69,6 +71,15 @@ import com.pomogrow.pomosolo.ui.theme.PomoTextDim
 fun StudyRoomScreen() {
     val state by StudyRoomStore.state.collectAsState()
     val auth by AuthStore.state.collectAsState()
+    val p2pMessage by P2PTransfer.message.collectAsState()
+
+    // P2P 结果提示 4 秒后自动清除（避免长期占用提示条）
+    LaunchedEffect(p2pMessage) {
+        if (p2pMessage != null) {
+            delay(4_000)
+            P2PTransfer.consumeMessage()
+        }
+    }
 
     LaunchedEffect(auth.loggedIn) {
         if (auth.loggedIn) {
@@ -132,7 +143,7 @@ fun StudyRoomScreen() {
 
         // 固定高度提示条（不挤动布局）
         Box(Modifier.fillMaxWidth().height(22.dp).padding(horizontal = 18.dp), Alignment.CenterStart) {
-            val tip = state.error ?: state.message
+            val tip = state.error ?: p2pMessage ?: state.message
             if (tip != null) {
                 Text(
                     tip,
@@ -254,6 +265,7 @@ private fun InRoomContent(state: StudyRoomState) {
     val listState = rememberLazyListState()
     val me = AuthStore.state.collectAsState().value.user?.id.orEmpty()
     val amDj = state.djUserId.isNotEmpty() && state.djUserId == me
+    val p2p by P2PTransfer.progress.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         // 成员（横向）
@@ -281,6 +293,10 @@ private fun InRoomContent(state: StudyRoomState) {
                         Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .background(PomoSurface)
+                            // 点其他成员 → 发起 P2P 直连测试（对齐桌面端 P2P 测试工具）
+                            .clickable(enabled = m.userId.isNotEmpty() && m.userId != me) {
+                                P2PTransfer.startSpeedTest(m.userId)
+                            }
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -322,6 +338,22 @@ private fun InRoomContent(state: StudyRoomState) {
                     Text("申请当 DJ", color = PomoPrimary, fontSize = 12.sp)
                 }
             }
+        }
+
+        // P2P 直连状态（点上方成员 → 发起 WebRTC 直连测速）
+        if (p2p.active || p2p.connected) {
+            Text(
+                buildString {
+                    append("P2P ${p2p.role}")
+                    append(" · ${p2p.transferredBytes / 1024} KB")
+                    if (p2p.totalBytes > 0) append(" / ${p2p.totalBytes / 1024} KB")
+                    append(" · %.1f Mbps".format(p2p.speedBps / 1024.0 / 1024.0 * 8))
+                    append(if (p2p.connected) " · 已直连" else " · 打洞中…")
+                },
+                color = PomoGreen,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
         }
 
         // 聊天

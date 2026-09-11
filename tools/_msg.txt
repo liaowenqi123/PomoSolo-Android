@@ -1,0 +1,30 @@
+[安卓端部门] feat: m5.1 P2P 直连（WebRTC 传输层）+ 视觉修正（MuMu 实机逐屏核对）
+
+═══ 1. 自测环境（本轮建立，可复用）═══
+- MuMu 模拟器 adb 端口 127.0.0.1:16448（Android 15 / x86_64 / 900x1600 / 320dpi），
+  该环境下 `adb shell input tap` 生效，可逐屏点测（headless AVD 的 input 不生效）；
+- 流程：install → am start → input tap 切 tab → screencap → 拉回逐屏核对。
+
+═══ 2. m5.1 P2P 直连（WebRTC）═══
+- 依赖：io.github.webrtc-sdk:android:125.6422.07（libwebrtc 预编译 + Java 绑定，BSD），
+  abiFilters = {arm64-v8a, x86_64}（保留 x86_64 以便模拟器自测）；
+  实测 APK 32.13MB → 55.35MB（两个 ABI）。
+- 新增 data/P2PTransfer.kt（协议对齐桌面端/PWA 的 src/p2p.ts）：
+  PeerConnection + DataChannel("p2p", ordered)、4×STUN（无 TURN）、
+  控制消息 meta{t,size,totalChunks,chunkSize}、数据帧 4 字节大端 index + payload、
+  128KB 分片、bufferedAmount 背压、ICE 候选缓冲（remoteDescription 前先缓存）、
+  打洞失败提示可回退服务器中转。
+- StudyRoomStore：注入 sendSignal（走现有 WS 发 peer:offer/answer/ice + to_user_id），
+  并把收到的 peer:* 转给 P2PTransfer.onSignal。
+- StudyRoomScreen：房内点其他成员 → 发起 P2P 直连测速（2MB 随机数据），
+  成员区下方实时显示「P2P 发送/接收 · 已传 KB / 总 KB · Mbps · 已直连/打洞中」，
+  结果提示 4 秒自动清除。
+- MainActivity 初始化 P2PTransfer。
+- MuMu 实机验证：安装启动正常、WebRTC 原生库加载无崩溃（真打洞需两台设备同房间互测）。
+
+═══ 3. 视觉修正（MuMu 实拍发现）═══
+- 关掉的 Switch 与卡片底色糊在一起、看起来像"禁用" → 指定 uncheckedThumb/Track/Border 颜色；
+- 其余沿用上一轮的边到边 + 圆环内圈 + 白底红字激活态等改动，MuMu 上逐屏确认无回归
+  （专注/自习室/音乐/设置四页均正常，账号页显示「已登录 · admin · Key 由服务器下发」）。
+
+构建：BUILD SUCCESSFUL；已在 MuMu 安装运行。

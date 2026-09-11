@@ -310,6 +310,10 @@ private fun SwitchRow(
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = PomoPrimary,
+                // 关闭态若沿用默认灰，会和卡片底色糊在一起（看起来像"禁用"而非"关闭"）
+                uncheckedThumbColor = Color.White.copy(alpha = 0.75f),
+                uncheckedTrackColor = Color.White.copy(alpha = 0.14f),
+                uncheckedBorderColor = Color.White.copy(alpha = 0.28f),
             ),
         )
     }

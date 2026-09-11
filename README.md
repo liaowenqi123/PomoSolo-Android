@@ -39,7 +39,7 @@ PomoSolo 的 **Android 原生应用（V1）**。代码全部在本工程内**自
 | **m3 · 播放与计时体验** | 后台播放 + 系统通知、锁屏媒体控制(MediaSession)、下载续传/取消、计时前台服务 | 🚧 部分 |
 | **m4 · 账号体系** | REST 对接（注册 / 登录 / 刷新 / 登出 / 会话）、Token 持久化 + 401 自动刷新重试、连接测试、admin 的 DeepSeek Key 下发 | ✅ 完成 |
 | **m5 · 自习室** | WebSocket 客户端（心跳 / 退避重连 / 4001 踢线处理）、房间列表 · 创建 · 加入、成员、聊天、番茄完成广播、DJ 同步听歌 | ✅ 完成 |
-| **m5.1 · P2P 传歌** | 服务器中转分片传歌；WebRTC DataChannel 直连（省服务器带宽、P2P 提速）待接入 | 🚧 部分 |
+| **m5.1 · P2P 直连** | 接入 WebRTC native 库 + 实现 DataChannel 传输层（4×STUN / 128KB 分片 / 4 字节大端序号 / 背压）+ WS 信令桥接（peer:offer/answer/ice）+ 自习室内点成员发起直连测速 | ✅ 完成（待双端真机联调） |
 
 ### 与 PWA 部门的关系（分工边界）
 
@@ -274,6 +274,21 @@ Key 的配置方式（设置 → 音乐 · AI 选片）：
 
 **推进前提**：① 手机上 WS 信令可用（见上方探测记录，本机握手超时待确认）；
 ② 两台真机互测打洞成功率（对称 NAT 下无 TURN 可能失败，此时自动回退中转）。
+
+#### Android 端已实现（m5.1）
+
+| 文件 | 内容 |
+|------|------|
+| `data/P2PTransfer.kt` | WebRTC 传输层：`PeerConnection` + DataChannel(`"p2p"`, ordered)、4×STUN、`meta` 控制消息、128KB 分片、4 字节大端序号、`bufferedAmount` 背压、ICE 候选缓冲（remoteDescription 前先缓存）、连接/失败回调 |
+| `data/StudyRoomStore.kt` | 信令桥接：注入 `sendSignal`（走现有 WS 发 `peer:offer/answer/ice`，带 `to_user_id`）+ 把收到的 `peer:*` 转给 `P2PTransfer.onSignal` |
+| `ui/StudyRoomScreen.kt` | 房内**点其他成员 → 发起 P2P 直连测速**（随机数据），成员区下方实时显示 `已直连/打洞中 · 已传 KB · Mbps` |
+
+依赖：`io.github.webrtc-sdk:android:125.6422.07`，`abiFilters = {arm64-v8a, x86_64}`
+（保留 x86_64 以便在模拟器/MuMu 上自测）。**实测 APK：32.13MB → 55.35MB（+23MB，两个 ABI）**；
+若只留 arm64-v8a 并且用 AAB 分发，单设备约 +8.5MB。
+
+实测（2026-09-11，MuMu 模拟器 Android 15 / x86_64）：安装启动正常、WebRTC 原生库加载无崩溃；
+**真正的打洞与传输需要两台设备在同一个自习室互测**（点对方成员发起测速即可）。
 
 > 探测记录：REST 全部可用（`/api/status` 200、`/auth/session` 401 等）；
 > `wss://api.pomogrow.top/ws` 在开发机上探测超时（本机网络对 WS 升级的限制），
